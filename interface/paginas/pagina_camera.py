@@ -1,725 +1,209 @@
-import os
+from __future__ import annotations
+
+import threading
 import time
 
 import cv2
 import numpy as np
-
-from PySide6.QtWidgets import (
-    QWidget,
-    QVBoxLayout,
-    QLabel
-)
-
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QImage, QPixmap
+from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
+from camera_utils import abrir_camera
 from configuracoes import carregar_configuracoes
 from controle_acesso import ControleAcesso
+from face_engine import FaceEngine
+from perfil_store import PerfilStore
 
 
 class PaginaCamera(QWidget):
+    resultado_porta = Signal(bool)
+
     def __init__(self):
         super().__init__()
-
-        self.ARQUIVO_PERFIS = "perfis.npz"
-
-        # =====================================================
-        # CONFIGURAÇÕES
-        # =====================================================
-
-        config = carregar_configuracoes()
-
-        self.CAMERA = config.get(
-            "camera",
-            "/dev/video2"
-        )
-
-        self.LIMIAR = config.get(
-            "limiar_reconhecimento",
-            0.45
-        )
-
-        self.CONFIANCA_DETECCAO = config.get(
-            "confianca_deteccao",
-            0.80
-        )
-
-        self.MOSTRAR_FPS = config.get(
-            "mostrar_fps",
-            False
-        )
-
-        # =====================================================
-        # CÂMERA
-        # =====================================================
-
         self.camera = None
-
-        # =====================================================
-        # FPS
-        # =====================================================
-
-        self.fps = 0
-        self.tempo_frame_anterior = time.time()
-
-        # =====================================================
-        # CONTROLE DE ACESSO
-        # =====================================================
-
-        self.controle_acesso = ControleAcesso(
-            porta="/dev/ttyACM0",
-            baudrate=115200
-        )
-
-        # Pessoas que podem abrir a porta.
-        # Os nomes devem ser iguais aos cadastrados.
-        self.pessoas_autorizadas = {
-            "socrates"
-        }
-
-        # Quantos frames seguidos são necessários
-        self.frames_necessarios = 5
-
+        self.engine = FaceEngine()
+        self.store = PerfilStore()
+        self.controle_acesso = ControleAcesso()
+        self.perfis, self.nomes = self.store.carregar()
+        self.config = {}
         self.nome_confirmacao = None
         self.frames_confirmados = 0
-
-        # Tempo mínimo entre duas aberturas
-        self.cooldown_acesso = 10
-
-        self.ultimo_acesso = 0
-
-        # =====================================================
-        # INTERFACE
-        # =====================================================
+        self.ultimo_acesso = 0.0
+        self.abrindo_porta = False
+        self.contador_frames = 0
+        self.fps = 0.0
+        self.tempo_frame = time.monotonic()
 
         layout = QVBoxLayout(self)
-
-        titulo = QLabel(
-            "Reconhecimento Facial"
-        )
-
-        titulo.setStyleSheet(
-            "font-size: 28px; "
-            "font-weight: bold;"
-        )
-
-        self.status_acesso = QLabel(
-            "Controle de acesso ativo"
-        )
-
-        self.status_acesso.setAlignment(
-            Qt.AlignCenter
-        )
-
-        self.camera_label = QLabel(
-            "Câmera desligada"
-        )
-
-        self.camera_label.setAlignment(
-            Qt.AlignCenter
-        )
-
-        self.camera_label.setMinimumSize(
-            700,
-            500
-        )
-
+        titulo = QLabel("Reconhecimento Facial")
+        titulo.setStyleSheet("font-size: 28px; font-weight: bold;")
+        self.status_acesso = QLabel("Aguardando câmera...")
+        self.status_acesso.setAlignment(Qt.AlignCenter)
+        self.camera_label = QLabel("Câmera desligada")
+        self.camera_label.setAlignment(Qt.AlignCenter)
+        self.camera_label.setMinimumSize(640, 400)
         layout.addWidget(titulo)
         layout.addWidget(self.status_acesso)
         layout.addWidget(self.camera_label)
 
-        # =====================================================
-        # YUNET
-        # =====================================================
-
-        self.detector = cv2.FaceDetectorYN.create(
-            "modelos/yunet.onnx",
-            "",
-            (640, 480),
-            self.CONFIANCA_DETECCAO,
-            0.3,
-            5000
-        )
-
-        # =====================================================
-        # SFACE
-        # =====================================================
-
-        self.reconhecedor = (
-            cv2.FaceRecognizerSF.create(
-                "modelos/sface.onnx",
-                ""
-            )
-        )
-
-        # =====================================================
-        # PERFIS
-        # =====================================================
-
-        self.perfis = np.array([])
-        self.nomes = np.array([])
-
-        self.carregar_perfis()
-
-        # =====================================================
-        # TIMER
-        # =====================================================
-
         self.timer = QTimer(self)
-
-        self.timer.timeout.connect(
-            self.atualizar_camera
-        )
-
-    # =========================================================
-    # CONFIGURAÇÕES
-    # =========================================================
+        self.timer.timeout.connect(self.atualizar_camera)
+        self.resultado_porta.connect(self._mostrar_resultado_porta)
+        self.carregar_configuracoes()
 
     def carregar_configuracoes(self):
-        config = carregar_configuracoes()
-
-        self.CAMERA = config.get(
-            "camera",
-            "/dev/video2"
+        self.config = carregar_configuracoes()
+        self.engine.configurar_confianca(self.config["confianca_deteccao"])
+        self.controle_acesso.configurar(
+            self.config["porta_esp32"], self.config["baudrate_esp32"]
         )
-
-        self.LIMIAR = config.get(
-            "limiar_reconhecimento",
-            0.45
-        )
-
-        self.CONFIANCA_DETECCAO = config.get(
-            "confianca_deteccao",
-            0.80
-        )
-
-        self.MOSTRAR_FPS = config.get(
-            "mostrar_fps",
-            False
-        )
-
-        self.detector.setScoreThreshold(
-            self.CONFIANCA_DETECCAO
-        )
-
-    # =========================================================
-    # PERFIS
-    # =========================================================
 
     def carregar_perfis(self):
-        if not os.path.exists(
-            self.ARQUIVO_PERFIS
-        ):
-            self.perfis = np.array([])
-            self.nomes = np.array([])
-
-            print(
-                "Nenhum perfil encontrado."
-            )
-
-            return
-
         try:
-            dados = np.load(
-                self.ARQUIVO_PERFIS
-            )
-
-            self.perfis = dados["perfis"]
-            self.nomes = dados["nomes"]
-
-            print(
-                f"{len(self.nomes)} "
-                "pessoa(s) carregada(s)."
-            )
-
-        except Exception as erro:
-            print(
-                "Erro ao carregar perfis:",
-                erro
-            )
-
-            self.perfis = np.array([])
-            self.nomes = np.array([])
-
-    # =========================================================
-    # CÂMERA
-    # =========================================================
+            self.perfis, self.nomes = self.store.carregar()
+        except RuntimeError as erro:
+            print(erro)
+            self.perfis = np.empty((0, 128), dtype=np.float32)
+            self.nomes = np.array([], dtype=str)
 
     def iniciar_camera(self):
         self.carregar_configuracoes()
-
-        if (
-            self.camera is not None
-            and self.camera.isOpened()
-        ):
+        self.carregar_perfis()
+        if self.camera is not None and self.camera.isOpened():
             return
-
-        self.camera_label.clear()
-
-        self.camera_label.setText(
-            "Iniciando câmera..."
+        self.camera_label.setText("Iniciando câmera...")
+        self.camera = abrir_camera(
+            self.config["camera"], self.config["largura_camera"],
+            self.config["altura_camera"], self.config["fps_camera"],
         )
-
-        self.camera = cv2.VideoCapture(
-            self.CAMERA,
-            cv2.CAP_V4L2
-        )
-
-        if not self.camera.isOpened():
-            self.camera_label.setText(
-                "Não foi possível abrir "
-                f"a câmera {self.CAMERA}."
-            )
-
-            self.camera = None
+        if self.camera is None:
+            self.camera_label.setText(f"Não foi possível abrir a câmera {self.config['camera']}.")
             return
-
-        # Reinicia FPS
-        self.fps = 0
-        self.tempo_frame_anterior = (
-            time.time()
-        )
-
-        # Reinicia confirmação facial
-        self.nome_confirmacao = None
-        self.frames_confirmados = 0
-
-        self.status_acesso.setText(
-            "Controle de acesso ativo"
-        )
-
-        self.timer.start(33)
+        self._reiniciar_confirmacao()
+        self.contador_frames = 0
+        self.tempo_frame = time.monotonic()
+        intervalo = max(15, round(1000 / self.config["fps_camera"]))
+        self.timer.start(intervalo)
 
     def parar_camera(self):
         self.timer.stop()
-
         if self.camera is not None:
             self.camera.release()
             self.camera = None
-
-        self.nome_confirmacao = None
-        self.frames_confirmados = 0
-
+        self._reiniciar_confirmacao()
         self.camera_label.clear()
+        self.camera_label.setText("Câmera desligada")
 
-        self.camera_label.setText(
-            "Câmera desligada"
-        )
-
-    # =========================================================
-    # RECONHECIMENTO
-    # =========================================================
-
-    def reconhecer_rosto(
-        self,
-        frame,
-        rosto
-    ):
-        if len(self.perfis) == 0:
-            return (
-                "Desconhecido",
-                0
-            )
-
+    def reconhecer_rosto(self, frame, rosto):
         try:
-            rosto_alinhado = (
-                self.reconhecedor.alignCrop(
-                    frame,
-                    rosto
-                )
+            embedding = self.engine.embedding(frame, rosto)
+            return self.engine.reconhecer(
+                embedding, self.perfis, self.nomes,
+                self.config["limiar_reconhecimento"],
             )
+        except (ValueError, cv2.error) as erro:
+            print("Erro no reconhecimento:", erro)
+            return "Desconhecido", 0.0
 
-            embedding = (
-                self.reconhecedor.feature(
-                    rosto_alinhado
-                ).flatten()
-            )
-
-            norma = np.linalg.norm(
-                embedding
-            )
-
-            if norma == 0:
-                return (
-                    "Desconhecido",
-                    0
-                )
-
-            embedding = (
-                embedding / norma
-            )
-
-            melhor_nome = "Desconhecido"
-            melhor_score = -1
-
-            for perfil, nome in zip(
-                self.perfis,
-                self.nomes
-            ):
-                score = (
-                    self.reconhecedor.match(
-                        embedding,
-                        perfil,
-                        cv2.FaceRecognizerSF_FR_COSINE
-                    )
-                )
-
-                if score > melhor_score:
-                    melhor_score = score
-                    melhor_nome = str(nome)
-
-            if melhor_score < self.LIMIAR:
-                melhor_nome = (
-                    "Desconhecido"
-                )
-
-            return (
-                melhor_nome,
-                melhor_score
-            )
-
-        except Exception as erro:
-            print(
-                "Erro no reconhecimento:",
-                erro
-            )
-
-            return (
-                "Desconhecido",
-                0
-            )
-
-    # =========================================================
-    # CONTROLE DE ACESSO
-    # =========================================================
-
-    def verificar_acesso(self, nome):
-        nome_normalizado = (
-            nome.strip().lower()
-        )
-
-        # Pessoa desconhecida
-        if nome_normalizado == "desconhecido":
-            self.nome_confirmacao = None
-            self.frames_confirmados = 0
-
-            self.status_acesso.setText(
-                "Pessoa não reconhecida"
-            )
-
+    def verificar_acesso(self, nome: str):
+        nome = nome.strip().lower()
+        autorizados = set(self.config["pessoas_autorizadas"])
+        if nome == "desconhecido":
+            self._reiniciar_confirmacao()
+            self.status_acesso.setText("Pessoa não reconhecida")
+            return
+        if nome not in autorizados:
+            self._reiniciar_confirmacao()
+            self.status_acesso.setText(f"{nome.title()} — sem autorização")
             return
 
-        # Pessoa cadastrada, mas sem autorização
-        if (
-            nome_normalizado
-            not in self.pessoas_autorizadas
-        ):
-            self.nome_confirmacao = None
-            self.frames_confirmados = 0
-
-            self.status_acesso.setText(
-                f"{nome.title()} - "
-                "sem autorização"
-            )
-
-            return
-
-        # Mesmo rosto do frame anterior
-        if (
-            self.nome_confirmacao
-            == nome_normalizado
-        ):
+        if self.nome_confirmacao == nome:
             self.frames_confirmados += 1
-
         else:
-            self.nome_confirmacao = (
-                nome_normalizado
-            )
-
-            self.frames_confirmados = 1
-
-        self.status_acesso.setText(
-            f"Verificando {nome.title()}... "
-            f"{self.frames_confirmados}/"
-            f"{self.frames_necessarios}"
-        )
-
-        # Ainda não confirmou frames suficientes
-        if (
-            self.frames_confirmados
-            < self.frames_necessarios
-        ):
+            self.nome_confirmacao, self.frames_confirmados = nome, 1
+        necessarios = self.config["frames_confirmacao"]
+        self.status_acesso.setText(f"Verificando {nome.title()}... {self.frames_confirmados}/{necessarios}")
+        if self.frames_confirmados < necessarios or self.abrindo_porta:
             return
 
-        agora = time.time()
-
-        # Verifica cooldown
-        if (
-            agora - self.ultimo_acesso
-            < self.cooldown_acesso
-        ):
-            restante = int(
-                self.cooldown_acesso
-                - (
-                    agora
-                    - self.ultimo_acesso
-                )
-            )
-
-            self.status_acesso.setText(
-                f"{nome.title()} autorizado - "
-                f"aguarde {restante}s"
-            )
-
+        agora = time.monotonic()
+        restante = self.config["cooldown_acesso"] - (agora - self.ultimo_acesso)
+        if restante > 0:
+            self.status_acesso.setText(f"{nome.title()} autorizado — aguarde {int(restante) + 1}s")
             return
 
-        # =====================================================
-        # ACESSO LIBERADO
-        # =====================================================
+        self.abrindo_porta = True
+        self.status_acesso.setText("Comunicando com o ESP32...")
+        threading.Thread(target=self._abrir_porta, daemon=True).start()
+        self._reiniciar_confirmacao()
 
-        sucesso = (
-            self.controle_acesso.abrir()
-        )
+    def _abrir_porta(self):
+        self.resultado_porta.emit(self.controle_acesso.abrir())
 
+    def _mostrar_resultado_porta(self, sucesso: bool):
+        self.abrindo_porta = False
         if sucesso:
-            self.ultimo_acesso = agora
-
-            self.status_acesso.setText(
-                f"Acesso liberado: "
-                f"{nome.title()}"
-            )
-
-            print(
-                "Acesso liberado para:",
-                nome
-            )
-
+            self.ultimo_acesso = time.monotonic()
+            self.status_acesso.setText("Acesso liberado")
         else:
-            self.status_acesso.setText(
-                "Falha na comunicação "
-                "com o ESP32"
-            )
+            self.status_acesso.setText("Falha na comunicação com o ESP32")
 
-            print(
-                "Falha ao enviar comando "
-                "para o ESP32."
-            )
-
-        # Reinicia confirmação
+    def _reiniciar_confirmacao(self):
         self.nome_confirmacao = None
         self.frames_confirmados = 0
-
-    # =========================================================
-    # ATUALIZAÇÃO DA CÂMERA
-    # =========================================================
 
     def atualizar_camera(self):
         if self.camera is None:
             return
-
-        sucesso, frame = (
-            self.camera.read()
-        )
-
+        sucesso, frame = self.camera.read()
         if not sucesso:
+            self.status_acesso.setText("Falha ao capturar imagem")
             return
 
-        # =====================================================
-        # FPS
-        # =====================================================
+        agora = time.monotonic()
+        delta = agora - self.tempo_frame
+        if delta > 0:
+            atual = 1.0 / delta
+            self.fps = atual if self.fps == 0 else self.fps * 0.9 + atual * 0.1
+        self.tempo_frame = agora
+        self.contador_frames += 1
 
-        agora = time.time()
-
-        tempo_decorrido = (
-            agora
-            - self.tempo_frame_anterior
-        )
-
-        if tempo_decorrido > 0:
-            fps_instantaneo = (
-                1 / tempo_decorrido
-            )
-
-            if self.fps == 0:
-                self.fps = (
-                    fps_instantaneo
-                )
-
-            else:
-                self.fps = (
-                    self.fps * 0.9
-                    + fps_instantaneo * 0.1
-                )
-
-        self.tempo_frame_anterior = agora
-
-        # =====================================================
-        # DETECÇÃO
-        # =====================================================
-
-        altura, largura = (
-            frame.shape[:2]
-        )
-
-        self.detector.setInputSize(
-            (largura, altura)
-        )
-
-        _, rostos = (
-            self.detector.detect(frame)
-        )
-
-        # Guarda os nomes reconhecidos
+        rostos = self.engine.detectar(frame)
         nomes_frame = []
-
-        if rostos is not None:
-            for rosto in rostos:
-                x = int(rosto[0])
-                y = int(rosto[1])
-                w = int(rosto[2])
-                h = int(rosto[3])
-
-                nome, score = (
-                    self.reconhecer_rosto(
-                        frame,
-                        rosto
-                    )
-                )
-
-                nomes_frame.append(nome)
-
-                if nome == "Desconhecido":
-                    cor = (
-                        0,
-                        0,
-                        255
-                    )
-
-                else:
-                    cor = (
-                        0,
-                        255,
-                        0
-                    )
-
-                cv2.rectangle(
-                    frame,
-                    (x, y),
-                    (
-                        x + w,
-                        y + h
-                    ),
-                    cor,
-                    2
-                )
-
-                texto = (
-                    f"{nome} "
-                    f"{score:.2f}"
-                )
-
-                cv2.putText(
-                    frame,
-                    texto,
-                    (
-                        x,
-                        max(
-                            y - 10,
-                            20
-                        )
-                    ),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.7,
-                    cor,
-                    2
-                )
-
-        # =====================================================
-        # VERIFICAÇÃO DE ACESSO
-        # =====================================================
+        for rosto in rostos:
+            x, y, w, h = (int(rosto[i]) for i in range(4))
+            nome, score = self.reconhecer_rosto(frame, rosto)
+            nomes_frame.append(nome)
+            cor = (0, 0, 255) if nome == "Desconhecido" else (0, 255, 0)
+            cv2.rectangle(frame, (x, y), (x + w, y + h), cor, 2)
+            cv2.putText(frame, f"{nome} {score:.2f}", (x, max(y - 10, 20)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.65, cor, 2)
 
         if len(nomes_frame) == 1:
-            self.verificar_acesso(
-                nomes_frame[0]
-            )
-
-        elif len(nomes_frame) == 0:
-            self.nome_confirmacao = None
-            self.frames_confirmados = 0
-
-            self.status_acesso.setText(
-                "Aguardando pessoa..."
-            )
-
+            self.verificar_acesso(nomes_frame[0])
+        elif not nomes_frame:
+            self._reiniciar_confirmacao()
+            self.status_acesso.setText("Aguardando pessoa...")
         else:
-            # Por segurança, não abre com
-            # várias faces simultaneamente.
-            self.nome_confirmacao = None
-            self.frames_confirmados = 0
+            self._reiniciar_confirmacao()
+            self.status_acesso.setText("Mais de uma pessoa detectada")
 
-            self.status_acesso.setText(
-                "Mais de uma pessoa detectada"
-            )
+        if self.config["mostrar_fps"]:
+            cv2.putText(frame, f"FPS: {self.fps:.1f}", (20, 35),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 0), 2)
+        self._mostrar_frame(frame)
 
-        # =====================================================
-        # FPS NA TELA
-        # =====================================================
-
-        if self.MOSTRAR_FPS:
-            cv2.putText(
-                frame,
-                f"FPS: {self.fps:.1f}",
-                (20, 35),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
-                (0, 255, 0),
-                2
-            )
-
-        # =====================================================
-        # OPENCV -> PYSIDE
-        # =====================================================
-
-        frame_rgb = cv2.cvtColor(
-            frame,
-            cv2.COLOR_BGR2RGB
+    def _mostrar_frame(self, frame):
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        altura, largura, canais = rgb.shape
+        imagem = QImage(rgb.data, largura, altura, canais * largura, QImage.Format_RGB888).copy()
+        pixmap = QPixmap.fromImage(imagem).scaled(
+            self.camera_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation
         )
-
-        altura, largura, canais = (
-            frame_rgb.shape
-        )
-
-        imagem = QImage(
-            frame_rgb.data,
-            largura,
-            altura,
-            canais * largura,
-            QImage.Format_RGB888
-        )
-
-        imagem = imagem.copy()
-
-        pixmap = QPixmap.fromImage(
-            imagem
-        )
-
-        pixmap = pixmap.scaled(
-            self.camera_label.size(),
-            Qt.KeepAspectRatio,
-            Qt.SmoothTransformation
-        )
-
-        self.camera_label.setPixmap(
-            pixmap
-        )
-
-    # =========================================================
-    # FECHAR
-    # =========================================================
+        self.camera_label.setPixmap(pixmap)
 
     def closeEvent(self, event):
         self.parar_camera()
-
         self.controle_acesso.desconectar()
-
         event.accept()

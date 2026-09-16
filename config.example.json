@@ -1,0 +1,18 @@
+{
+    "perfil_hardware": "auto",
+    "camera": "/dev/video0",
+    "largura_camera": 640,
+    "altura_camera": 480,
+    "fps_camera": 20,
+    "processar_a_cada_frames": 1,
+    "limiar_reconhecimento": 0.46,
+    "confianca_deteccao": 0.8,
+    "mostrar_fps": true,
+    "quantidade_cadastro": 20,
+    "intervalo_cadastro": 0.55,
+    "frames_confirmacao": 5,
+    "cooldown_acesso": 10,
+    "porta_esp32": "/dev/ttyACM0",
+    "baudrate_esp32": 115200,
+    "pessoas_autorizadas": ["socrates"]
+}

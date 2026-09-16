@@ -1,1205 +1,190 @@
-import os
+from __future__ import annotations
+
 import time
-import shutil
 
 import cv2
-import numpy as np
-
-from PySide6.QtWidgets import (
-    QWidget,
-    QVBoxLayout,
-    QHBoxLayout,
-    QLabel,
-    QPushButton,
-    QLineEdit,
-    QProgressBar,
-    QApplication
-)
-
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QImage, QPixmap
+from PySide6.QtWidgets import (
+    QHBoxLayout, QLabel, QLineEdit, QProgressBar, QPushButton, QVBoxLayout, QWidget,
+)
 
+from camera_utils import abrir_camera
 from configuracoes import carregar_configuracoes
+from face_engine import FaceEngine
+from perfil_store import PerfilStore, normalizar_nome
 
 
 class PaginaCadastro(QWidget):
-
     def __init__(self):
         super().__init__()
-
-        # =========================
-        # CONFIGURAÇÕES PADRÃO
-        # =========================
-
-        self.CAMERA = "/dev/video2"
-
-        self.ARQUIVO_PERFIS = "perfis.npz"
-
-        self.PASTA_DADOS = "dados"
-        self.PASTA_TEMPORARIA = "dados_temporarios"
-
-        self.QUANTIDADE = 20
-        self.INTERVALO = 0.7
-
-        # =========================
-        # ESTADO
-        # =========================
-
         self.camera = None
-        self.timer = None
-
-        self.nome_atual = None
-        self.pasta_atual = None
-        self.pasta_temporaria_atual = None
-
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.atualizar_camera)
+        self.engine = FaceEngine()
+        self.store = PerfilStore()
+        self.embeddings = []
+        self.nome_atual = ""
         self.contador = 0
-        self.ultima_captura = 0
-
+        self.ultima_captura = 0.0
         self.cadastrando = False
         self.modo_recadastro = False
-
-        # =========================
-        # CONFIGURAÇÕES SALVAS
-        # =========================
-
-        config = carregar_configuracoes()
-
-        self.CAMERA = config.get(
-            "camera",
-            "/dev/video2"
-        )
-
-        confianca = config.get(
-            "confianca_deteccao",
-            0.80
-        )
-
-        # =========================
-        # YUNET
-        # =========================
-
-        self.detector = cv2.FaceDetectorYN.create(
-            "modelos/yunet.onnx",
-            "",
-            (640, 480),
-            confianca,
-            0.3,
-            5000
-        )
-
-        # =========================
-        # SFACE
-        # =========================
-
-        self.reconhecedor = (
-            cv2.FaceRecognizerSF.create(
-                "modelos/sface.onnx",
-                ""
-            )
-        )
-
-        # =========================
-        # INTERFACE
-        # =========================
+        self.config = carregar_configuracoes()
 
         layout = QVBoxLayout(self)
-
-        titulo = QLabel(
-            "Cadastrar Pessoa"
-        )
-
-        titulo.setStyleSheet(
-            "font-size: 28px; "
-            "font-weight: bold;"
-        )
-
-        # =========================
-        # NOME
-        # =========================
-
+        titulo = QLabel("Cadastrar Pessoa")
+        titulo.setStyleSheet("font-size: 28px; font-weight: bold;")
         self.nome = QLineEdit()
-
-        self.nome.setPlaceholderText(
-            "Digite o nome da pessoa"
-        )
-
-        # =========================
-        # BOTÕES
-        # =========================
-
-        self.botao_iniciar = QPushButton(
-            "Iniciar cadastro"
-        )
-
-        self.botao_cancelar = QPushButton(
-            "Cancelar"
-        )
-
-        self.botao_cancelar.setEnabled(
-            False
-        )
-
+        self.nome.setPlaceholderText("Digite o nome da pessoa")
+        self.botao_iniciar = QPushButton("Iniciar cadastro")
+        self.botao_cancelar = QPushButton("Cancelar")
+        self.botao_cancelar.setEnabled(False)
         botoes = QHBoxLayout()
-
-        botoes.addWidget(
-            self.botao_iniciar
-        )
-
-        botoes.addWidget(
-            self.botao_cancelar
-        )
-
-        # =========================
-        # CÂMERA
-        # =========================
-
-        self.camera_label = QLabel(
-            "Informe o nome e inicie o cadastro."
-        )
-
-        self.camera_label.setAlignment(
-            Qt.AlignCenter
-        )
-
-        self.camera_label.setMinimumSize(
-            640,
-            400
-        )
-
-        # =========================
-        # PROGRESSO
-        # =========================
-
+        botoes.addWidget(self.botao_iniciar)
+        botoes.addWidget(self.botao_cancelar)
+        self.camera_label = QLabel("Informe o nome e inicie o cadastro.")
+        self.camera_label.setAlignment(Qt.AlignCenter)
+        self.camera_label.setMinimumSize(640, 400)
         self.progresso = QProgressBar()
+        self.status = QLabel("Aguardando cadastro...")
+        self.status.setAlignment(Qt.AlignCenter)
+        layout.addWidget(titulo)
+        layout.addWidget(self.nome)
+        layout.addLayout(botoes)
+        layout.addWidget(self.camera_label)
+        layout.addWidget(self.progresso)
+        layout.addWidget(self.status)
+        self.botao_iniciar.clicked.connect(self.iniciar_cadastro)
+        self.botao_cancelar.clicked.connect(self.cancelar_cadastro)
+        self._atualizar_limites()
 
-        self.progresso.setRange(
-            0,
-            self.QUANTIDADE
-        )
+    def _atualizar_limites(self):
+        self.config = carregar_configuracoes()
+        self.quantidade = self.config["quantidade_cadastro"]
+        self.intervalo = self.config["intervalo_cadastro"]
+        self.progresso.setRange(0, self.quantidade)
+        self.engine.configurar_confianca(self.config["confianca_deteccao"])
 
-        self.progresso.setValue(
-            0
-        )
-
-        # =========================
-        # STATUS
-        # =========================
-
-        self.status = QLabel(
-            "Aguardando cadastro..."
-        )
-
-        self.status.setAlignment(
-            Qt.AlignCenter
-        )
-
-        # =========================
-        # LAYOUT
-        # =========================
-
-        layout.addWidget(
-            titulo
-        )
-
-        layout.addSpacing(
-            15
-        )
-
-        layout.addWidget(
-            self.nome
-        )
-
-        layout.addLayout(
-            botoes
-        )
-
-        layout.addSpacing(
-            15
-        )
-
-        layout.addWidget(
-            self.camera_label
-        )
-
-        layout.addWidget(
-            self.progresso
-        )
-
-        layout.addWidget(
-            self.status
-        )
-
-        # =========================
-        # EVENTOS
-        # =========================
-
-        self.botao_iniciar.clicked.connect(
-            self.iniciar_cadastro
-        )
-
-        self.botao_cancelar.clicked.connect(
-            self.cancelar_cadastro
-        )
-
-    # =============================
-    # PREPARAR RECADASTRO
-    # =============================
-
-    def preparar_recadastro(
-        self,
-        nome
-    ):
-
+    def preparar_recadastro(self, nome):
         self.parar_camera()
-
         self.modo_recadastro = True
-
-        self.nome.setText(
-            nome
-        )
-
-        self.nome.setEnabled(
-            False
-        )
-
-        self.progresso.setValue(
-            0
-        )
-
-        self.camera_label.clear()
-
-        self.camera_label.setStyleSheet(
-            ""
-        )
-
-        self.camera_label.setText(
-            "Clique em Iniciar cadastro."
-        )
-
-        self.status.setText(
-            f"Pronto para recadastrar "
-            f"{nome.title()}."
-        )
-
-    # =============================
-    # INSTRUÇÃO DO ROSTO
-    # =============================
+        self.nome.setText(nome)
+        self.nome.setEnabled(False)
+        self.progresso.setValue(0)
+        self.status.setText(f"Pronto para recadastrar {nome.title()}.")
 
     def obter_instrucao(self):
-
-        if self.contador < 5:
-
-            return (
-                "Olhe para frente"
-            )
-
-        elif self.contador < 9:
-
-            return (
-                "Vire levemente para a esquerda"
-            )
-
-        elif self.contador < 13:
-
-            return (
-                "Vire levemente para a direita"
-            )
-
-        elif self.contador < 17:
-
-            return (
-                "Olhe levemente para cima"
-            )
-
-        else:
-
-            return (
-                "Olhe levemente para baixo"
-            )
-
-    # =============================
-    # INICIAR CADASTRO
-    # =============================
+        proporcao = self.contador / max(1, self.quantidade)
+        if proporcao < 0.25:
+            return "Olhe para frente"
+        if proporcao < 0.45:
+            return "Vire levemente para a esquerda"
+        if proporcao < 0.65:
+            return "Vire levemente para a direita"
+        if proporcao < 0.85:
+            return "Olhe levemente para cima"
+        return "Olhe levemente para baixo"
 
     def iniciar_cadastro(self):
-
-        # =========================
-        # CARREGAR CONFIGURAÇÕES
-        # =========================
-
-        config = carregar_configuracoes()
-
-        self.CAMERA = config.get(
-            "camera",
-            "/dev/video2"
-        )
-
-        confianca = config.get(
-            "confianca_deteccao",
-            0.80
-        )
-
-        # Atualiza a confiança do YuNet
-        self.detector.setScoreThreshold(
-            confianca
-        )
-
-        # =========================
-        # NOME
-        # =========================
-
-        nome = (
-            self.nome
-            .text()
-            .strip()
-            .lower()
-        )
-
-        if not nome:
-
-            self.status.setText(
-                "Digite um nome."
-            )
-
+        self._atualizar_limites()
+        try:
+            self.nome_atual = normalizar_nome(self.nome.text())
+        except ValueError as erro:
+            self.status.setText(str(erro))
             return
 
-        self.nome_atual = nome
-
-        # =========================
-        # LIMPAR INTERFACE
-        # =========================
-
-        self.camera_label.clear()
-
-        self.camera_label.setStyleSheet(
-            ""
+        self.camera = abrir_camera(
+            self.config["camera"], self.config["largura_camera"],
+            self.config["altura_camera"], self.config["fps_camera"],
         )
+        if self.camera is None:
+            self.status.setText("Não foi possível abrir a câmera.")
+            return
 
-        self.status.setText(
-            "Iniciando câmera..."
-        )
-
-        # =========================
-        # PASTA DEFINITIVA
-        # =========================
-
-        self.pasta_atual = os.path.join(
-            self.PASTA_DADOS,
-            nome
-        )
-
-        # =========================
-        # PASTA TEMPORÁRIA
-        # =========================
-
-        self.pasta_temporaria_atual = (
-            os.path.join(
-                self.PASTA_TEMPORARIA,
-                nome
-            )
-        )
-
-        # Remove temporário antigo
-        if os.path.exists(
-            self.pasta_temporaria_atual
-        ):
-
-            shutil.rmtree(
-                self.pasta_temporaria_atual
-            )
-
-        os.makedirs(
-            self.pasta_temporaria_atual,
-            exist_ok=True
-        )
-
-        # =========================
-        # CONTADORES
-        # =========================
-
+        self.embeddings = []
         self.contador = 0
-        self.ultima_captura = 0
-
-        self.progresso.setValue(
-            0
-        )
-
-        # =========================
-        # ABRIR CÂMERA
-        # =========================
-
-        self.camera = cv2.VideoCapture(
-            self.CAMERA,
-            cv2.CAP_V4L2
-        )
-
-        if not self.camera.isOpened():
-
-            self.status.setText(
-                "Não foi possível abrir a câmera."
-            )
-
-            self.camera = None
-
-            self.limpar_temporario()
-
-            return
-
-        # =========================
-        # TIMER
-        # =========================
-
-        self.timer = QTimer(
-            self
-        )
-
-        self.timer.timeout.connect(
-            self.atualizar_camera
-        )
-
-        self.timer.start(
-            33
-        )
-
+        self.ultima_captura = 0.0
+        self.progresso.setValue(0)
         self.cadastrando = True
-
-        # =========================
-        # INTERFACE
-        # =========================
-
-        self.nome.setEnabled(
-            False
-        )
-
-        self.botao_iniciar.setEnabled(
-            False
-        )
-
-        self.botao_cancelar.setEnabled(
-            True
-        )
-
-        self.status.setText(
-            f"{self.obter_instrucao()} — "
-            f"0/{self.QUANTIDADE}"
-        )
-
-    # =============================
-    # ATUALIZAR CÂMERA
-    # =============================
+        self.nome.setEnabled(False)
+        self.botao_iniciar.setEnabled(False)
+        self.botao_cancelar.setEnabled(True)
+        self.timer.start(max(15, round(1000 / self.config["fps_camera"])))
+        self.status.setText(f"{self.obter_instrucao()} — 0/{self.quantidade}")
 
     def atualizar_camera(self):
-
-        if not self.cadastrando:
+        if not self.cadastrando or self.camera is None:
             return
-
-        if self.camera is None:
-            return
-
-        sucesso, frame = (
-            self.camera.read()
-        )
-
+        sucesso, frame = self.camera.read()
         if not sucesso:
+            self.status.setText("Falha ao capturar imagem.")
             return
 
-        altura, largura = (
-            frame.shape[:2]
-        )
-
-        # =========================
-        # DETECÇÃO YUNET
-        # =========================
-
-        self.detector.setInputSize(
-            (largura, altura)
-        )
-
-        _, rostos = (
-            self.detector.detect(
-                frame
-            )
-        )
-
-        # =========================
-        # UM ROSTO
-        # =========================
-
-        if (
-            rostos is not None
-            and len(rostos) == 1
-        ):
-
+        rostos = self.engine.detectar(frame)
+        if len(rostos) == 1:
             rosto = rostos[0]
-
-            x = int(
-                rosto[0]
-            )
-
-            y = int(
-                rosto[1]
-            )
-
-            w = int(
-                rosto[2]
-            )
-
-            h = int(
-                rosto[3]
-            )
-
-            confianca = (
-                rosto[-1]
-            )
-
-            instrucao = (
-                self.obter_instrucao()
-            )
-
-            # =========================
-            # RETÂNGULO
-            # =========================
-
-            cv2.rectangle(
-                frame,
-                (x, y),
-                (x + w, y + h),
-                (0, 255, 0),
-                2
-            )
-
-            # =========================
-            # CONFIANÇA
-            # =========================
-
-            cv2.putText(
-                frame,
-                f"Rosto {confianca:.2f}",
-                (
-                    x,
-                    max(y - 10, 20)
-                ),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.65,
-                (0, 255, 0),
-                2
-            )
-
-            # =========================
-            # INSTRUÇÃO
-            # =========================
-
-            cv2.putText(
-                frame,
-                instrucao,
-                (20, 40),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.75,
-                (255, 255, 255),
-                2
-            )
-
-            self.status.setText(
-                f"{instrucao} — "
-                f"{self.contador}/"
-                f"{self.QUANTIDADE}"
-            )
-
-            # =========================
-            # CAPTURA
-            # =========================
-
-            agora = time.time()
-
-            if (
-                confianca >= 0.90
-                and
-                agora - self.ultima_captura
-                >= self.INTERVALO
-                and
-                self.contador
-                < self.QUANTIDADE
-            ):
-
-                rosto_alinhado = (
-                    self.reconhecedor.alignCrop(
-                        frame,
-                        rosto
-                    )
-                )
-
-                self.contador += 1
-
-                caminho = os.path.join(
-                    self.pasta_temporaria_atual,
-                    f"rosto_{self.contador}.jpg"
-                )
-
-                salvou = cv2.imwrite(
-                    caminho,
-                    rosto_alinhado
-                )
-
-                if not salvou:
-
-                    self.contador -= 1
-
-                    self.status.setText(
-                        "Erro ao salvar a foto."
-                    )
-
-                    return
-
-                self.ultima_captura = (
-                    agora
-                )
-
-                self.progresso.setValue(
-                    self.contador
-                )
-
-                # =====================
-                # TERMINOU
-                # =====================
-
-                if (
-                    self.contador
-                    >= self.QUANTIDADE
-                ):
-
+            x, y, w, h = (int(rosto[i]) for i in range(4))
+            confianca = float(rosto[-1])
+            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+            agora = time.monotonic()
+            if confianca >= 0.90 and agora - self.ultima_captura >= self.intervalo:
+                try:
+                    self.embeddings.append(self.engine.embedding(frame, rosto))
+                    self.contador += 1
+                    self.ultima_captura = agora
+                    self.progresso.setValue(self.contador)
+                except (ValueError, cv2.error):
+                    pass
+                if self.contador >= self.quantidade:
                     self.finalizar_cadastro()
-
                     return
-
-                self.status.setText(
-                    f"{self.obter_instrucao()} — "
-                    f"{self.contador}/"
-                    f"{self.QUANTIDADE}"
-                )
-
-        # =========================
-        # MAIS DE UM ROSTO
-        # =========================
-
-        elif (
-            rostos is not None
-            and len(rostos) > 1
-        ):
-
-            self.status.setText(
-                "Deixe apenas uma pessoa na câmera."
-            )
-
-            cv2.putText(
-                frame,
-                "Apenas uma pessoa",
-                (20, 40),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.75,
-                (255, 255, 255),
-                2
-            )
-
-        # =========================
-        # NENHUM ROSTO
-        # =========================
-
+            self.status.setText(f"{self.obter_instrucao()} — {self.contador}/{self.quantidade}")
+        elif len(rostos) > 1:
+            self.status.setText("Deixe apenas uma pessoa na câmera.")
         else:
-
-            self.status.setText(
-                "Posicione o rosto na câmera."
-            )
-
-            cv2.putText(
-                frame,
-                "Posicione o rosto",
-                (20, 40),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.75,
-                (255, 255, 255),
-                2
-            )
-
-        # =========================
-        # OPENCV -> QT
-        # =========================
-
-        frame_rgb = cv2.cvtColor(
-            frame,
-            cv2.COLOR_BGR2RGB
-        )
-
-        altura, largura, canais = (
-            frame_rgb.shape
-        )
-
-        imagem = QImage(
-            frame_rgb.data,
-            largura,
-            altura,
-            canais * largura,
-            QImage.Format_RGB888
-        )
-
-        pixmap = QPixmap.fromImage(
-            imagem
-        )
-
-        pixmap = pixmap.scaled(
-            self.camera_label.size(),
-            Qt.KeepAspectRatio,
-            Qt.SmoothTransformation
-        )
-
-        self.camera_label.setPixmap(
-            pixmap
-        )
-
-    # =============================
-    # FINALIZAR CADASTRO
-    # =============================
+            self.status.setText("Posicione o rosto na câmera.")
+        self._mostrar_frame(frame)
 
     def finalizar_cadastro(self):
-
-        nome_final = (
-            self.nome_atual
-        )
-
-        # =========================
-        # DESLIGAR CÂMERA
-        # =========================
-
         self.parar_camera()
-
-        # Remove o último frame
-        self.camera_label.clear()
-
-        self.camera_label.setStyleSheet(
-            """
-            QLabel {
-                font-size: 24px;
-                font-weight: bold;
-                padding: 40px;
-            }
-            """
-        )
-
-        self.camera_label.setText(
-            "Processando cadastro..."
-        )
-
-        self.status.setText(
-            "Gerando perfil facial..."
-        )
-
-        QApplication.processEvents()
-
-        # =========================
-        # GERAR PERFIL
-        # =========================
-
-        sucesso = (
-            self.gerar_perfil()
-        )
-
-        # =========================
-        # SUCESSO
-        # =========================
-
-        if sucesso:
-
-            try:
-
-                # Remove fotos antigas
-                # somente após sucesso.
-                if os.path.exists(
-                    self.pasta_atual
-                ):
-
-                    shutil.rmtree(
-                        self.pasta_atual
-                    )
-
-                # Move as novas fotos
-                # para a pasta definitiva.
-                shutil.move(
-                    self.pasta_temporaria_atual,
-                    self.pasta_atual
-                )
-
-                self.pasta_temporaria_atual = (
-                    None
-                )
-
-                # =====================
-                # TELA DE SUCESSO
-                # =====================
-
-                self.camera_label.clear()
-
-                self.camera_label.setText(
-                    f"✓\n\n"
-                    f"{nome_final.title()}\n"
-                    f"cadastrado com sucesso!"
-                )
-
-                self.camera_label.setStyleSheet(
-                    """
-                    QLabel {
-                        font-size: 26px;
-                        font-weight: bold;
-                        padding: 40px;
-                    }
-                    """
-                )
-
-                self.status.setText(
-                    "Cadastro concluído "
-                    "com sucesso."
-                )
-
-            except Exception as erro:
-
-                print(
-                    "Erro ao mover fotos:",
-                    erro
-                )
-
-                self.camera_label.clear()
-
-                self.camera_label.setText(
-                    "Erro ao finalizar cadastro."
-                )
-
-                self.status.setText(
-                    "Perfil criado, mas ocorreu "
-                    "um erro ao salvar as fotos."
-                )
-
-        # =========================
-        # ERRO
-        # =========================
-
-        else:
-
-            self.limpar_temporario()
-
-            self.camera_label.clear()
-
-            self.camera_label.setText(
-                "Não foi possível concluir "
-                "o cadastro."
-            )
-
-            self.status.setText(
-                "Erro ao gerar perfil facial."
-            )
-
-        # =========================
-        # LIBERAR INTERFACE
-        # =========================
-
-        self.nome.setEnabled(
-            True
-        )
-
-        self.botao_iniciar.setEnabled(
-            True
-        )
-
-        self.botao_cancelar.setEnabled(
-            False
-        )
-
-        self.modo_recadastro = False
-
-        self.nome.clear()
-
-    # =============================
-    # GERAR PERFIL
-    # =============================
-
-    def gerar_perfil(self):
-
-        embeddings = []
-
-        if (
-            not self.pasta_temporaria_atual
-            or
-            not os.path.exists(
-                self.pasta_temporaria_atual
-            )
-        ):
-
-            return False
-
-        # =========================
-        # LER FOTOS
-        # =========================
-
-        for arquivo in sorted(
-            os.listdir(
-                self.pasta_temporaria_atual
-            )
-        ):
-
-            if not arquivo.lower().endswith(
-                (
-                    ".jpg",
-                    ".jpeg",
-                    ".png"
-                )
-            ):
-
-                continue
-
-            caminho = os.path.join(
-                self.pasta_temporaria_atual,
-                arquivo
-            )
-
-            imagem = cv2.imread(
-                caminho
-            )
-
-            if imagem is None:
-                continue
-
-            # =========================
-            # EMBEDDING SFACE
-            # =========================
-
-            embedding = (
-                self.reconhecedor.feature(
-                    imagem
-                ).flatten()
-            )
-
-            # =========================
-            # NORMALIZAÇÃO
-            # =========================
-
-            norma = np.linalg.norm(
-                embedding
-            )
-
-            if norma == 0:
-                continue
-
-            embedding = (
-                embedding / norma
-            )
-
-            embeddings.append(
-                embedding
-            )
-
-        # =========================
-        # VALIDAR
-        # =========================
-
-        if len(embeddings) == 0:
-
-            print(
-                "Nenhum embedding válido."
-            )
-
-            return False
-
-        # =========================
-        # PERFIL MÉDIO
-        # =========================
-
-        perfil = np.mean(
-            embeddings,
-            axis=0
-        )
-
-        norma = np.linalg.norm(
-            perfil
-        )
-
-        if norma == 0:
-            return False
-
-        perfil = (
-            perfil / norma
-        )
-
-        # =========================
-        # CARREGAR BANCO
-        # =========================
-
-        if os.path.exists(
-            self.ARQUIVO_PERFIS
-        ):
-
-            dados = np.load(
-                self.ARQUIVO_PERFIS
-            )
-
-            perfis = list(
-                dados["perfis"]
-            )
-
-            nomes = [
-                str(nome)
-                for nome in dados["nomes"]
-            ]
-
-        else:
-
-            perfis = []
-            nomes = []
-
-        # =========================
-        # ATUALIZAR PERFIL
-        # =========================
-
-        if self.nome_atual in nomes:
-
-            indice = nomes.index(
-                self.nome_atual
-            )
-
-            perfis[indice] = (
-                perfil
-            )
-
-            print(
-                f"Perfil de "
-                f"{self.nome_atual} "
-                f"atualizado."
-            )
-
-        # =========================
-        # NOVO PERFIL
-        # =========================
-
-        else:
-
-            nomes.append(
-                self.nome_atual
-            )
-
-            perfis.append(
-                perfil
-            )
-
-            print(
-                f"Perfil de "
-                f"{self.nome_atual} "
-                f"criado."
-            )
-
-        # =========================
-        # SALVAR BANCO
-        # =========================
-
-        np.savez(
-            self.ARQUIVO_PERFIS,
-
-            perfis=np.array(
-                perfis,
-                dtype=np.float32
-            ),
-
-            nomes=np.array(
-                nomes
-            )
-        )
-
-        print(
-            f"{len(embeddings)} "
-            f"embeddings utilizados."
-        )
-
-        return True
-
-    # =============================
-    # CANCELAR CADASTRO
-    # =============================
+        try:
+            perfil = self.engine.criar_perfil(self.embeddings)
+            self.store.salvar_perfil(self.nome_atual, perfil)
+            self.camera_label.setText(f"✓\n\n{self.nome_atual.title()}\ncadastrado com sucesso!")
+            self.status.setText("Cadastro concluído. As imagens não foram armazenadas.")
+        except (ValueError, RuntimeError, OSError) as erro:
+            self.camera_label.setText("Não foi possível concluir o cadastro.")
+            self.status.setText(str(erro))
+        self._liberar_interface(limpar_nome=True)
 
     def cancelar_cadastro(self):
-
         self.parar_camera()
-
-        # Apaga apenas arquivos
-        # temporários.
-        self.limpar_temporario()
-
-        # Remove último frame
+        self.embeddings.clear()
         self.camera_label.clear()
+        self.camera_label.setText("Informe o nome e inicie o cadastro.")
+        self.status.setText("Cadastro cancelado.")
+        self.progresso.setValue(0)
+        self._liberar_interface(limpar_nome=True)
 
-        self.camera_label.setStyleSheet(
-            ""
-        )
-
-        self.camera_label.setText(
-            "Informe o nome e inicie o cadastro."
-        )
-
-        self.status.setText(
-            "Cadastro cancelado."
-        )
-
-        self.nome.setEnabled(
-            True
-        )
-
-        self.botao_iniciar.setEnabled(
-            True
-        )
-
-        self.botao_cancelar.setEnabled(
-            False
-        )
-
+    def _liberar_interface(self, limpar_nome=False):
+        self.nome.setEnabled(True)
+        self.botao_iniciar.setEnabled(True)
+        self.botao_cancelar.setEnabled(False)
         self.modo_recadastro = False
-
-        self.nome.clear()
-
-        self.progresso.setValue(
-            0
-        )
-
-    # =============================
-    # LIMPAR TEMPORÁRIO
-    # =============================
-
-    def limpar_temporario(self):
-
-        if (
-            self.pasta_temporaria_atual
-            and
-            os.path.exists(
-                self.pasta_temporaria_atual
-            )
-        ):
-
-            shutil.rmtree(
-                self.pasta_temporaria_atual
-            )
-
-        self.pasta_temporaria_atual = (
-            None
-        )
-
-    # =============================
-    # PARAR CÂMERA
-    # =============================
+        if limpar_nome:
+            self.nome.clear()
 
     def parar_camera(self):
-
         self.cadastrando = False
-
-        if self.timer is not None:
-
-            self.timer.stop()
-            self.timer.deleteLater()
-            self.timer = None
-
+        self.timer.stop()
         if self.camera is not None:
-
             self.camera.release()
             self.camera = None
+
+    def _mostrar_frame(self, frame):
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        altura, largura, canais = rgb.shape
+        imagem = QImage(rgb.data, largura, altura, canais * largura, QImage.Format_RGB888).copy()
+        self.camera_label.setPixmap(QPixmap.fromImage(imagem).scaled(
+            self.camera_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation
+        ))
