@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.idea/
+.vscode/
+.pytest_cache/
+config.json
+dados/
+dados_temporarios/
+dados_privados/
+perfis.npz
+*.npz
+*.yml
+*.log
+.DS_Store

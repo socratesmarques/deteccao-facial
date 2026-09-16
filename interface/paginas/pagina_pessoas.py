@@ -1,486 +1,85 @@
-import os
-import shutil
-import numpy as np
-
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
-    QWidget,
-    QVBoxLayout,
-    QHBoxLayout,
-    QLabel,
-    QPushButton,
-    QScrollArea,
-    QFrame,
-    QMessageBox,
-    QLineEdit
+    QFrame, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton,
+    QScrollArea, QVBoxLayout, QWidget,
 )
 
-from PySide6.QtCore import Signal
+from perfil_store import PerfilStore
+
 
 class PaginaPessoas(QWidget):
-
-    # Avisa a JanelaPrincipal que alguém
-    # quer recadastrar uma pessoa
     recadastrar = Signal(str)
 
     def __init__(self):
         super().__init__()
-
-        self.ARQUIVO_PERFIS = "perfis.npz"
-        self.PASTA_DADOS = "dados"
-    
-        # =========================
-        # INTERFACE
-        # =========================
-
-        self.layout = QVBoxLayout(self)
-
-        titulo = QLabel(
-            "Pessoas Cadastradas"
-        )
-
-        titulo.setStyleSheet(
-            "font-size: 28px; "
-            "font-weight: bold;"
-        )
-
-        self.total = QLabel(
-            "0 pessoas cadastradas"
-        )
+        self.store = PerfilStore()
+        layout = QVBoxLayout(self)
+        titulo = QLabel("Pessoas Cadastradas")
+        titulo.setStyleSheet("font-size: 28px; font-weight: bold;")
+        self.total = QLabel()
         self.pesquisa = QLineEdit()
-
-        self.pesquisa.setPlaceholderText(
-            "Pesquisar pessoa..."
-        )
-
-        self.pesquisa.textChanged.connect(
-            self.carregar_pessoas
-        )
-
-        self.botao_atualizar = QPushButton(
-            "Atualizar lista"
-        )
-
-        self.botao_atualizar.clicked.connect(
-            self.carregar_pessoas
-        )
-
-        self.layout.addWidget(titulo)
-        self.layout.addWidget(self.total)
-        self.layout.addWidget(
-            self.botao_atualizar
-        )
-
-        # =========================
-        # ÁREA ROLÁVEL
-        # =========================
-
+        self.pesquisa.setPlaceholderText("Pesquisar pessoa...")
+        self.pesquisa.textChanged.connect(self.carregar_pessoas)
+        atualizar = QPushButton("Atualizar lista")
+        atualizar.clicked.connect(self.carregar_pessoas)
+        layout.addWidget(titulo)
+        layout.addWidget(self.total)
+        layout.addWidget(self.pesquisa)
+        layout.addWidget(atualizar)
         self.scroll = QScrollArea()
-
-        self.scroll.setWidgetResizable(
-            True
-        )
-
+        self.scroll.setWidgetResizable(True)
         self.container = QWidget()
-
-        self.lista_layout = QVBoxLayout(
-            self.container
-        )
-
+        self.lista_layout = QVBoxLayout(self.container)
         self.lista_layout.addStretch()
-
-        self.scroll.setWidget(
-            self.container
-        )
-
-        self.layout.addWidget(
-            self.scroll
-        )
-
-        # Carrega inicialmente
+        self.scroll.setWidget(self.container)
+        layout.addWidget(self.scroll)
         self.carregar_pessoas()
 
-
-    # =============================
-    # LIMPAR LISTA
-    # =============================
-
     def limpar_lista(self):
-
         while self.lista_layout.count() > 1:
-
             item = self.lista_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
 
-            widget = item.widget()
-
-            if widget is not None:
-                widget.deleteLater()
-
-
-    # =============================
-    # CARREGAR PESSOAS
-    # =============================
-
-    def carregar_pessoas(self):
-
+    def carregar_pessoas(self, *_):
         self.limpar_lista()
-
-        if not os.path.exists(
-            self.ARQUIVO_PERFIS
-        ):
-
-            self.total.setText(
-                "Nenhuma pessoa cadastrada"
-            )
-
-            return
-
         try:
-
-            dados = np.load(
-                self.ARQUIVO_PERFIS
-            )
-
-            nomes = dados["nomes"]
-
-        except Exception as erro:
-
-            self.total.setText(
-                "Erro ao carregar os perfis."
-            )
-
-            print(
-                "Erro ao carregar perfis:",
-                erro
-            )
-
+            nomes = self.store.listar()
+        except RuntimeError as erro:
+            self.total.setText(str(erro))
             return
-
-        quantidade = len(nomes)
-
-        # =========================
-        # TOTAL
-        # =========================
-
-        if quantidade == 0:
-
-            self.total.setText(
-                "Nenhuma pessoa cadastrada"
-            )
-
-        elif quantidade == 1:
-
-            self.total.setText(
-                "1 pessoa cadastrada"
-            )
-
-        else:
-
-            self.total.setText(
-                f"{quantidade} pessoas cadastradas"
-            )
-
-        # =========================
-        # CARDS
-        # =========================
-
-        for nome in nomes:
-
-            card = self.criar_card(
-                str(nome)
-            )
-
-            self.lista_layout.insertWidget(
-                self.lista_layout.count() - 1,
-                card
-            )
-
-
-    # =============================
-    # CRIAR CARD
-    # =============================
+        filtro = self.pesquisa.text().strip().lower()
+        exibidos = [nome for nome in nomes if filtro in nome.lower()]
+        self.total.setText(f"{len(nomes)} pessoa(s) cadastrada(s)")
+        for nome in exibidos:
+            self.lista_layout.insertWidget(self.lista_layout.count() - 1, self.criar_card(nome))
 
     def criar_card(self, nome):
-
         card = QFrame()
-
-        card.setStyleSheet(
-            """
-            QFrame {
-                border: 1px solid #555;
-                border-radius: 10px;
-                padding: 10px;
-            }
-            """
-        )
-
+        card.setStyleSheet("QFrame { border: 1px solid #555; border-radius: 10px; padding: 10px; }")
         layout = QHBoxLayout(card)
-
-        # =========================
-        # INFORMAÇÕES
-        # =========================
-
-        informacoes = QVBoxLayout()
-
-        label_nome = QLabel(
-            nome.title()
-        )
-
-        label_nome.setStyleSheet(
-            """
-            font-size: 18px;
-            font-weight: bold;
-            """
-        )
-
-        status = QLabel(
-            "● Perfil facial ativo"
-        )
-
-        # =========================
-        # QUANTIDADE DE IMAGENS
-        # =========================
-
-        pasta_pessoa = os.path.join(
-            self.PASTA_DADOS,
-            nome
-        )
-
-        quantidade = 0
-
-        if os.path.exists(
-            pasta_pessoa
-        ):
-
-            quantidade = len([
-                arquivo
-                for arquivo in os.listdir(
-                    pasta_pessoa
-                )
-                if arquivo.lower().endswith(
-                    (
-                        ".jpg",
-                        ".jpeg",
-                        ".png"
-                    )
-                )
-            ])
-
-        if quantidade == 1:
-
-            texto_imagens = (
-                "1 imagem cadastrada"
-            )
-
-        else:
-
-            texto_imagens = (
-                f"{quantidade} imagens cadastradas"
-            )
-
-        label_imagens = QLabel(
-            texto_imagens
-        )
-
-        informacoes.addWidget(
-            label_nome
-        )
-
-        informacoes.addWidget(
-            status
-        )
-
-        informacoes.addWidget(
-            label_imagens
-        )
-
-        layout.addLayout(
-            informacoes
-        )
-
+        label = QLabel(f"{nome.title()}\n● Perfil facial ativo")
+        label.setStyleSheet("font-size: 17px; font-weight: bold;")
+        layout.addWidget(label)
         layout.addStretch()
-
-        # =========================
-        # RECADASTRAR
-        # =========================
-
-        botao_recadastrar = QPushButton(
-            "Recadastrar"
-        )
-
-        botao_recadastrar.clicked.connect(
-            lambda: self.recadastrar.emit(
-                nome
-            )
-        )
-
-        layout.addWidget(
-            botao_recadastrar
-        )
-
-        # =========================
-        # EXCLUIR
-        # =========================
-
-        botao_excluir = QPushButton(
-            "Excluir"
-        )
-
-        botao_excluir.clicked.connect(
-            lambda: self.confirmar_exclusao(
-                nome
-            )
-        )
-
-        layout.addWidget(
-            botao_excluir
-        )
-
+        recadastrar = QPushButton("Recadastrar")
+        recadastrar.clicked.connect(lambda: self.recadastrar.emit(nome))
+        excluir = QPushButton("Excluir")
+        excluir.clicked.connect(lambda: self.confirmar_exclusao(nome))
+        layout.addWidget(recadastrar)
+        layout.addWidget(excluir)
         return card
 
-    # =============================
-    # CONFIRMAR EXCLUSÃO
-    # =============================
-
-    def confirmar_exclusao(
-        self,
-        nome
-    ):
-
+    def confirmar_exclusao(self, nome):
         resposta = QMessageBox.question(
-            self,
-            "Excluir pessoa",
-            (
-                f"Tem certeza que deseja excluir "
-                f"{nome.title()}?\n\n"
-                "O perfil facial e todas as fotos "
-                "dessa pessoa serão apagados."
-            ),
-            QMessageBox.Yes |
-            QMessageBox.No,
-            QMessageBox.No
+            self, "Excluir pessoa", f"Excluir definitivamente o perfil facial de {nome.title()}?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
         )
-
-        if resposta == QMessageBox.Yes:
-
-            self.excluir_pessoa(
-                nome
-            )
-
-
-    # =============================
-    # EXCLUIR PESSOA
-    # =============================
-
-    def excluir_pessoa(
-        self,
-        nome
-    ):
-
-        if not os.path.exists(
-            self.ARQUIVO_PERFIS
-        ):
-
-            QMessageBox.warning(
-                self,
-                "Erro",
-                "Arquivo de perfis não encontrado."
-            )
-
+        if resposta != QMessageBox.Yes:
             return
-
         try:
-
-            # =========================
-            # CARREGA PERFIS
-            # =========================
-
-            dados = np.load(
-                self.ARQUIVO_PERFIS
-            )
-
-            perfis = dados[
-                "perfis"
-            ]
-
-            nomes = dados[
-                "nomes"
-            ]
-
-            # =========================
-            # REMOVE A PESSOA
-            # =========================
-
-            mascara = nomes != nome
-
-            novos_perfis = perfis[
-                mascara
-            ]
-
-            novos_nomes = nomes[
-                mascara
-            ]
-
-            # =========================
-            # SALVA
-            # =========================
-
-            np.savez(
-                self.ARQUIVO_PERFIS,
-
-                perfis=np.array(
-                    novos_perfis,
-                    dtype=np.float32
-                ),
-
-                nomes=np.array(
-                    novos_nomes
-                )
-            )
-
-            # =========================
-            # REMOVE AS FOTOS
-            # =========================
-
-            pasta_pessoa = os.path.join(
-                self.PASTA_DADOS,
-                nome
-            )
-
-            if os.path.exists(
-                pasta_pessoa
-            ):
-
-                shutil.rmtree(
-                    pasta_pessoa
-                )
-
-            # =========================
-            # ATUALIZA LISTA
-            # =========================
-
-            self.carregar_pessoas()
-
-            QMessageBox.information(
-                self,
-                "Pessoa excluída",
-                (
-                    f"{nome.title()} foi "
-                    "excluído com sucesso."
-                )
-            )
-
-        except Exception as erro:
-
-            print(
-                "Erro ao excluir pessoa:",
-                erro
-            )
-
-            QMessageBox.critical(
-                self,
-                "Erro",
-                (
-                    "Não foi possível excluir "
-                    "a pessoa."
-                )
-            )
+            if self.store.excluir(nome):
+                self.carregar_pessoas()
+                QMessageBox.information(self, "Pessoa excluída", "Perfil removido com sucesso.")
+        except (RuntimeError, OSError, ValueError) as erro:
+            QMessageBox.critical(self, "Erro", str(erro))

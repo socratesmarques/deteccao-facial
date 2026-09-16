@@ -1,405 +1,100 @@
 import glob
 
 from PySide6.QtWidgets import (
-    QWidget,
-    QVBoxLayout,
-    QHBoxLayout,
-    QLabel,
-    QPushButton,
-    QComboBox,
-    QDoubleSpinBox,
-    QCheckBox,
-    QMessageBox,
-    QGroupBox,
-    QFormLayout
+    QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QGroupBox, QLabel,
+    QLineEdit, QMessageBox, QPushButton, QSpinBox, QVBoxLayout, QWidget,
 )
 
-from configuracoes import (
-    carregar_configuracoes,
-    salvar_configuracoes
-)
+from configuracoes import CONFIG_PADRAO, carregar_configuracoes, salvar_configuracoes
 
 
 class PaginaConfiguracoes(QWidget):
-
     def __init__(self):
         super().__init__()
+        layout = QVBoxLayout(self)
+        titulo = QLabel("Configurações")
+        titulo.setStyleSheet("font-size: 28px; font-weight: bold;")
+        layout.addWidget(titulo)
 
-        self.criar_interface()
+        grupo = QGroupBox("Câmera e desempenho")
+        form = QFormLayout(grupo)
+        self.camera = QComboBox()
+        self.perfil = QComboBox()
+        self.perfil.addItems(["auto", "notebook", "orange_pi"])
+        self.largura = QSpinBox(); self.largura.setRange(320, 1920)
+        self.altura = QSpinBox(); self.altura.setRange(240, 1080)
+        self.fps = QSpinBox(); self.fps.setRange(5, 60)
+        form.addRow("Perfil:", self.perfil)
+        form.addRow("Dispositivo:", self.camera)
+        form.addRow("Largura:", self.largura)
+        form.addRow("Altura:", self.altura)
+        form.addRow("FPS desejado:", self.fps)
+        layout.addWidget(grupo)
+
+        grupo_rec = QGroupBox("Reconhecimento e acesso")
+        rec = QFormLayout(grupo_rec)
+        self.limiar = QDoubleSpinBox(); self.limiar.setRange(0, 1); self.limiar.setSingleStep(0.01)
+        self.confianca = QDoubleSpinBox(); self.confianca.setRange(0.1, 1); self.confianca.setSingleStep(0.05)
+        self.frames = QSpinBox(); self.frames.setRange(2, 30)
+        self.cooldown = QSpinBox(); self.cooldown.setRange(1, 300)
+        self.porta = QLineEdit()
+        self.autorizados = QLineEdit()
+        self.autorizados.setPlaceholderText("socrates, alisson")
+        self.mostrar_fps = QCheckBox("Mostrar FPS")
+        rec.addRow("Limiar:", self.limiar)
+        rec.addRow("Confiança da detecção:", self.confianca)
+        rec.addRow("Frames de confirmação:", self.frames)
+        rec.addRow("Intervalo entre aberturas:", self.cooldown)
+        rec.addRow("Porta do ESP32:", self.porta)
+        rec.addRow("Pessoas autorizadas:", self.autorizados)
+        rec.addRow("", self.mostrar_fps)
+        layout.addWidget(grupo_rec)
+        salvar = QPushButton("Salvar configurações")
+        salvar.clicked.connect(self.salvar)
+        layout.addWidget(salvar)
+        layout.addStretch()
+        self.detectar_cameras()
         self.carregar()
 
-    # =============================
-    # CRIAR INTERFACE
-    # =============================
-
-    def criar_interface(self):
-
-        layout = QVBoxLayout(self)
-
-        titulo = QLabel(
-            "Configurações"
-        )
-
-        titulo.setStyleSheet(
-            "font-size: 28px; "
-            "font-weight: bold;"
-        )
-
-        descricao = QLabel(
-            "Configure a câmera e o "
-            "reconhecimento facial."
-        )
-
-        layout.addWidget(titulo)
-        layout.addWidget(descricao)
-        layout.addSpacing(20)
-
-        # =========================
-        # CÂMERA
-        # =========================
-
-        grupo_camera = QGroupBox(
-            "Câmera"
-        )
-
-        camera_layout = QFormLayout(
-            grupo_camera
-        )
-
-        self.camera = QComboBox()
-
-        # Detecta automaticamente
-        # as câmeras disponíveis.
-        self.detectar_cameras()
-
-        camera_layout.addRow(
-            "Dispositivo:",
-            self.camera
-        )
-
-        layout.addWidget(
-            grupo_camera
-        )
-
-        # =========================
-        # RECONHECIMENTO
-        # =========================
-
-        grupo_reconhecimento = QGroupBox(
-            "Reconhecimento facial"
-        )
-
-        reconhecimento_layout = QFormLayout(
-            grupo_reconhecimento
-        )
-
-        # =========================
-        # LIMIAR
-        # =========================
-
-        self.limiar = QDoubleSpinBox()
-
-        self.limiar.setRange(
-            0.0,
-            1.0
-        )
-
-        self.limiar.setSingleStep(
-            0.01
-        )
-
-        self.limiar.setDecimals(
-            2
-        )
-
-        reconhecimento_layout.addRow(
-            "Limiar de reconhecimento:",
-            self.limiar
-        )
-
-        # =========================
-        # CONFIANÇA
-        # =========================
-
-        self.confianca = QDoubleSpinBox()
-
-        self.confianca.setRange(
-            0.0,
-            1.0
-        )
-
-        self.confianca.setSingleStep(
-            0.05
-        )
-
-        self.confianca.setDecimals(
-            2
-        )
-
-        reconhecimento_layout.addRow(
-            "Confiança da detecção:",
-            self.confianca
-        )
-
-        # =========================
-        # FPS
-        # =========================
-
-        self.mostrar_fps = QCheckBox(
-            "Mostrar FPS na câmera"
-        )
-
-        reconhecimento_layout.addRow(
-            "",
-            self.mostrar_fps
-        )
-
-        layout.addWidget(
-            grupo_reconhecimento
-        )
-
-        # =========================
-        # EXPLICAÇÃO
-        # =========================
-
-        explicacao = QLabel(
-            "Quanto maior o limiar, mais rigoroso "
-            "será o reconhecimento. Valores muito "
-            "altos podem fazer pessoas cadastradas "
-            "aparecerem como desconhecidas."
-        )
-
-        explicacao.setWordWrap(
-            True
-        )
-
-        layout.addWidget(
-            explicacao
-        )
-
-        # =========================
-        # BOTÕES
-        # =========================
-
-        botoes = QHBoxLayout()
-
-        botao_padrao = QPushButton(
-            "Restaurar padrão"
-        )
-
-        botao_salvar = QPushButton(
-            "Salvar configurações"
-        )
-
-        botao_padrao.clicked.connect(
-            self.restaurar_padrao
-        )
-
-        botao_salvar.clicked.connect(
-            self.salvar
-        )
-
-        botoes.addStretch()
-
-        botoes.addWidget(
-            botao_padrao
-        )
-
-        botoes.addWidget(
-            botao_salvar
-        )
-
-        layout.addStretch()
-        layout.addLayout(botoes)
-
-    # =============================
-    # DETECTAR CÂMERAS
-    # =============================
-
     def detectar_cameras(self):
-
-        # Guarda a câmera que estava
-        # selecionada anteriormente.
-        camera_atual = (
-            self.camera.currentText()
-        )
-
+        atual = self.camera.currentText()
         self.camera.clear()
-
-        # Procura dispositivos de vídeo
-        # existentes no Linux.
-        dispositivos = sorted(
-            glob.glob(
-                "/dev/video*"
-            )
-        )
-
-        # Adiciona os dispositivos
-        # encontrados.
-        for dispositivo in dispositivos:
-
-            self.camera.addItem(
-                dispositivo
-            )
-
-        # Nenhuma câmera encontrada.
-        if not dispositivos:
-
-            self.camera.addItem(
-                "Nenhuma câmera encontrada"
-            )
-
-        # Tenta manter a câmera
-        # anteriormente selecionada.
-        if camera_atual:
-
-            indice = self.camera.findText(
-                camera_atual
-            )
-
-            if indice >= 0:
-
-                self.camera.setCurrentIndex(
-                    indice
-                )
-
-    # =============================
-    # CARREGAR CONFIGURAÇÕES
-    # =============================
+        dispositivos = sorted(glob.glob("/dev/video*"))
+        self.camera.addItems(dispositivos or ["/dev/video0"])
+        indice = self.camera.findText(atual)
+        if indice >= 0:
+            self.camera.setCurrentIndex(indice)
 
     def carregar(self):
-
-        config = carregar_configuracoes()
-
-        camera_salva = config.get(
-            "camera",
-            "/dev/video2"
-        )
-
-        indice = self.camera.findText(
-            camera_salva
-        )
-
-        # Caso a câmera salva não esteja
-        # atualmente disponível.
-        if indice == -1:
-
-            self.camera.addItem(
-                camera_salva
-            )
-
-            indice = self.camera.findText(
-                camera_salva
-            )
-
-        self.camera.setCurrentIndex(
-            indice
-        )
-
-        self.limiar.setValue(
-            config.get(
-                "limiar_reconhecimento",
-                0.45
-            )
-        )
-
-        self.confianca.setValue(
-            config.get(
-                "confianca_deteccao",
-                0.80
-            )
-        )
-
-        self.mostrar_fps.setChecked(
-            config.get(
-                "mostrar_fps",
-                False
-            )
-        )
-
-    # =============================
-    # SALVAR
-    # =============================
+        c = carregar_configuracoes()
+        indice = self.camera.findText(str(c["camera"]))
+        if indice < 0:
+            self.camera.addItem(str(c["camera"])); indice = self.camera.count() - 1
+        self.camera.setCurrentIndex(indice)
+        self.perfil.setCurrentText(c["perfil_hardware"])
+        self.largura.setValue(c["largura_camera"]); self.altura.setValue(c["altura_camera"])
+        self.fps.setValue(c["fps_camera"]); self.limiar.setValue(c["limiar_reconhecimento"])
+        self.confianca.setValue(c["confianca_deteccao"]); self.frames.setValue(c["frames_confirmacao"])
+        self.cooldown.setValue(c["cooldown_acesso"]); self.porta.setText(c["porta_esp32"])
+        self.autorizados.setText(", ".join(c["pessoas_autorizadas"]))
+        self.mostrar_fps.setChecked(c["mostrar_fps"])
 
     def salvar(self):
-
-        camera_selecionada = (
-            self.camera.currentText()
-        )
-
-        if (
-            camera_selecionada
-            == "Nenhuma câmera encontrada"
-        ):
-
-            QMessageBox.warning(
-                self,
-                "Câmera",
-                "Nenhuma câmera disponível."
-            )
-
-            return
-
-        config = {
-            "camera":
-                camera_selecionada,
-
-            "limiar_reconhecimento":
-                self.limiar.value(),
-
-            "confianca_deteccao":
-                self.confianca.value(),
-
-            "mostrar_fps":
-                self.mostrar_fps.isChecked()
-        }
-
-        sucesso = salvar_configuracoes(
-            config
-        )
-
-        if sucesso:
-
-            QMessageBox.information(
-                self,
-                "Configurações",
-                "Configurações salvas "
-                "com sucesso."
-            )
-
+        config = carregar_configuracoes()
+        config.update({
+            "perfil_hardware": self.perfil.currentText(), "camera": self.camera.currentText(),
+            "largura_camera": self.largura.value(), "altura_camera": self.altura.value(),
+            "fps_camera": self.fps.value(), "limiar_reconhecimento": self.limiar.value(),
+            "confianca_deteccao": self.confianca.value(), "frames_confirmacao": self.frames.value(),
+            "cooldown_acesso": self.cooldown.value(), "porta_esp32": self.porta.text().strip(),
+            "pessoas_autorizadas": [n.strip() for n in self.autorizados.text().split(",") if n.strip()],
+            "mostrar_fps": self.mostrar_fps.isChecked(),
+        })
+        if salvar_configuracoes(config):
+            QMessageBox.information(self, "Configurações", "Configurações salvas com sucesso.")
         else:
-
-            QMessageBox.critical(
-                self,
-                "Erro",
-                "Não foi possível salvar "
-                "as configurações."
-            )
-
-    # =============================
-    # RESTAURAR PADRÃO
-    # =============================
+            QMessageBox.critical(self, "Erro", "Não foi possível salvar as configurações.")
 
     def restaurar_padrao(self):
-
-        indice = self.camera.findText(
-            "/dev/video2"
-        )
-
-        if indice >= 0:
-
-            self.camera.setCurrentIndex(
-                indice
-            )
-
-        self.limiar.setValue(
-            0.45
-        )
-
-        self.confianca.setValue(
-            0.80
-        )
-
-        self.mostrar_fps.setChecked(
-            False
-        )
+        salvar_configuracoes(CONFIG_PADRAO)
+        self.carregar()

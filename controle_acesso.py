@@ -1,102 +1,73 @@
-import serial
+from __future__ import annotations
+
+import threading
 import time
+import serial
 
 
 class ControleAcesso:
-    def __init__(
-        self,
-        porta="/dev/ttyACM0",
-        baudrate=115200
-    ):
-        self.porta = porta
-        self.baudrate = baudrate
+    """Cliente serial thread-safe para o protocolo do ESP32."""
+
+    def __init__(self, porta="/dev/ttyACM0", baudrate=115200):
+        self.porta, self.baudrate = porta, int(baudrate)
         self.esp32 = None
+        self._lock = threading.Lock()
 
-    def conectar(self):
+    def configurar(self, porta: str, baudrate: int) -> None:
+        if porta != self.porta or int(baudrate) != self.baudrate:
+            self.desconectar()
+            self.porta, self.baudrate = porta, int(baudrate)
+
+    def conectar(self) -> bool:
+        with self._lock:
+            return self._conectar_sem_lock()
+
+    def _conectar_sem_lock(self) -> bool:
+        if self.esp32 is not None and self.esp32.is_open:
+            return True
         try:
-            if (
-                self.esp32 is not None
-                and self.esp32.is_open
-            ):
-                return True
-
-            self.esp32 = serial.Serial()
-
-            self.esp32.port = self.porta
-            self.esp32.baudrate = self.baudrate
-            self.esp32.timeout = 1
-
-            # Importante para o nosso ESP32
+            self.esp32 = serial.Serial(
+                port=self.porta, baudrate=self.baudrate, timeout=0.25,
+                write_timeout=1, dsrdtr=False, rtscts=False,
+            )
             self.esp32.dtr = False
             self.esp32.rts = False
-
-            self.esp32.open()
-
-            time.sleep(2)
-
+            time.sleep(1.8)
             self.esp32.reset_input_buffer()
-
-            # Testa a comunicação
             self.esp32.write(b"PING\n")
             self.esp32.flush()
-
-            fim = time.time() + 2
-
-            while time.time() < fim:
-                resposta = (
-                    self.esp32
-                    .readline()
-                    .decode("utf-8", errors="ignore")
-                    .strip()
-                )
-
+            limite = time.monotonic() + 2.0
+            while time.monotonic() < limite:
+                resposta = self.esp32.readline().decode("utf-8", errors="ignore").strip()
                 if resposta == "PONG":
-                    print("ESP32 conectado.")
                     return True
+            self._desconectar_sem_lock()
+        except (OSError, serial.SerialException) as erro:
+            print("Erro ao conectar ao ESP32:", erro)
+            self._desconectar_sem_lock()
+        return False
 
-            print("ESP32 não respondeu ao PING.")
-            self.desconectar()
-            return False
-
-        except Exception as erro:
-            print(
-                "Erro ao conectar ao ESP32:",
-                erro
-            )
-            self.desconectar()
-            return False
-
-    def abrir(self):
-        if (
-            self.esp32 is None
-            or not self.esp32.is_open
-        ):
-            if not self.conectar():
+    def abrir(self) -> bool:
+        with self._lock:
+            if not self._conectar_sem_lock():
+                return False
+            try:
+                self.esp32.write(b"ABRIR\n")
+                self.esp32.flush()
+                return True
+            except (OSError, serial.SerialException) as erro:
+                print("Erro ao enviar comando ao ESP32:", erro)
+                self._desconectar_sem_lock()
                 return False
 
+    def desconectar(self) -> None:
+        with self._lock:
+            self._desconectar_sem_lock()
+
+    def _desconectar_sem_lock(self) -> None:
         try:
-            self.esp32.write(b"ABRIR\n")
-            self.esp32.flush()
-
-            print("Comando ABRIR enviado.")
-            return True
-
-        except Exception as erro:
-            print(
-                "Erro ao enviar comando:",
-                erro
-            )
-            self.desconectar()
-            return False
-
-    def desconectar(self):
-        try:
-            if (
-                self.esp32 is not None
-                and self.esp32.is_open
-            ):
+            if self.esp32 is not None and self.esp32.is_open:
                 self.esp32.close()
-        except Exception:
+        except (OSError, serial.SerialException):
             pass
-
         self.esp32 = None

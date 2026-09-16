@@ -1,6 +1,0 @@
-{
-    "camera": "/dev/video0",
-    "limiar_reconhecimento": 0.46,
-    "confianca_deteccao": 0.8,
-    "mostrar_fps": true
-}

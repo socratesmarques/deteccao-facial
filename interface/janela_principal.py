@@ -304,11 +304,7 @@ class JanelaPrincipal(QMainWindow):
         self.pagina_camera.parar_camera()
 
 
-        # Coloca automaticamente o nome
-        # da pessoa no campo.
-        self.pagina_cadastro.nome.setText(
-            nome
-        )
+        self.pagina_cadastro.preparar_recadastro(nome)
 
 
         # Abre página de cadastro.
@@ -333,6 +329,8 @@ class JanelaPrincipal(QMainWindow):
     ):
 
         self.pagina_camera.parar_camera()
+
+        self.pagina_camera.controle_acesso.desconectar()
 
         self.pagina_cadastro.parar_camera()
 
