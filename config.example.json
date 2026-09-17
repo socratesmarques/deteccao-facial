@@ -1,5 +1,5 @@
 {
-    "perfil_hardware": "auto",
+    "perfil_hardware": "orange_pi",
     "camera": "/dev/video0",
     "largura_camera": 640,
     "altura_camera": 480,
@@ -12,8 +12,10 @@
     "intervalo_cadastro": 0.55,
     "frames_confirmacao": 5,
     "cooldown_acesso": 10,
-    "porta_esp32": "/dev/ttyACM0",
-    "baudrate_esp32": 115200,
+    "gpio_chip": "/dev/gpiochip0",
+    "gpio_linha_rele": -1,
+    "gpio_ativo_alto": false,
+    "tempo_acionamento_rele": 1.0,
     "pessoas_autorizadas": [
         "socrates"
     ],

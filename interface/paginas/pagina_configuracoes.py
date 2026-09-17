@@ -41,7 +41,10 @@ class PaginaConfiguracoes(QWidget):
         self.confianca = QDoubleSpinBox(); self.confianca.setRange(0.1, 1); self.confianca.setSingleStep(0.05)
         self.frames = QSpinBox(); self.frames.setRange(2, 30)
         self.cooldown = QSpinBox(); self.cooldown.setRange(1, 300)
-        self.porta = QLineEdit()
+        self.gpio_chip = QLineEdit()
+        self.gpio_linha = QSpinBox(); self.gpio_linha.setRange(-1, 1024)
+        self.gpio_ativo_alto = QCheckBox("Relé ativo em nível alto")
+        self.tempo_rele = QDoubleSpinBox(); self.tempo_rele.setRange(0.1, 10.0); self.tempo_rele.setSingleStep(0.1)
         self.autorizados = QLineEdit()
         self.autorizados.setPlaceholderText("socrates, alisson")
         self.mostrar_fps = QCheckBox("Mostrar FPS")
@@ -49,7 +52,10 @@ class PaginaConfiguracoes(QWidget):
         rec.addRow("Confiança da detecção:", self.confianca)
         rec.addRow("Frames de confirmação:", self.frames)
         rec.addRow("Intervalo entre aberturas:", self.cooldown)
-        rec.addRow("Porta do ESP32:", self.porta)
+        rec.addRow("GPIO chip:", self.gpio_chip)
+        rec.addRow("Linha GPIO do relé:", self.gpio_linha)
+        rec.addRow("Tempo do relé (s):", self.tempo_rele)
+        rec.addRow("", self.gpio_ativo_alto)
         rec.addRow("Pessoas autorizadas:", self.autorizados)
         rec.addRow("", self.mostrar_fps)
         layout.addWidget(grupo_rec)
@@ -81,7 +87,9 @@ class PaginaConfiguracoes(QWidget):
         self.largura.setValue(c["largura_camera"]); self.altura.setValue(c["altura_camera"])
         self.fps.setValue(c["fps_camera"]); self.limiar.setValue(c["limiar_reconhecimento"])
         self.confianca.setValue(c["confianca_deteccao"]); self.frames.setValue(c["frames_confirmacao"])
-        self.cooldown.setValue(c["cooldown_acesso"]); self.porta.setText(c["porta_esp32"])
+        self.cooldown.setValue(c["cooldown_acesso"])
+        self.gpio_chip.setText(c["gpio_chip"]); self.gpio_linha.setValue(c["gpio_linha_rele"])
+        self.gpio_ativo_alto.setChecked(c["gpio_ativo_alto"]); self.tempo_rele.setValue(c["tempo_acionamento_rele"])
         self.autorizados.setText(", ".join(c["pessoas_autorizadas"]))
         self.mostrar_fps.setChecked(c["mostrar_fps"])
 
@@ -93,7 +101,9 @@ class PaginaConfiguracoes(QWidget):
             "largura_camera": self.largura.value(), "altura_camera": self.altura.value(),
             "fps_camera": self.fps.value(), "limiar_reconhecimento": self.limiar.value(),
             "confianca_deteccao": self.confianca.value(), "frames_confirmacao": self.frames.value(),
-            "cooldown_acesso": self.cooldown.value(), "porta_esp32": self.porta.text().strip(),
+            "cooldown_acesso": self.cooldown.value(), "gpio_chip": self.gpio_chip.text().strip(),
+            "gpio_linha_rele": self.gpio_linha.value(), "gpio_ativo_alto": self.gpio_ativo_alto.isChecked(),
+            "tempo_acionamento_rele": self.tempo_rele.value(),
             "pessoas_autorizadas": [n.strip() for n in self.autorizados.text().split(",") if n.strip()],
             "mostrar_fps": self.mostrar_fps.isChecked(),
         })
