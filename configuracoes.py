@@ -16,7 +16,8 @@ CONFIG_PADRAO = {
     "confianca_deteccao": 0.80, "mostrar_fps": True,
     "quantidade_cadastro": 20, "intervalo_cadastro": 0.55,
     "frames_confirmacao": 5, "cooldown_acesso": 10,
-    "porta_esp32": "/dev/ttyACM0", "baudrate_esp32": 115200,
+    "gpio_chip": "/dev/gpiochip0", "gpio_linha_rele": -1,
+    "gpio_ativo_alto": False, "tempo_acionamento_rele": 1.0,
     "pessoas_autorizadas": ["socrates"],
 }
 
@@ -36,7 +37,10 @@ def _validar(config: dict) -> dict:
     resultado["intervalo_cadastro"] = min(3.0, max(0.2, float(resultado["intervalo_cadastro"])))
     resultado["frames_confirmacao"] = min(30, max(2, int(resultado["frames_confirmacao"])))
     resultado["cooldown_acesso"] = min(300, max(1, int(resultado["cooldown_acesso"])))
-    resultado["baudrate_esp32"] = int(resultado["baudrate_esp32"])
+    resultado["gpio_chip"] = str(resultado.get("gpio_chip", "/dev/gpiochip0")).strip() or "/dev/gpiochip0"
+    resultado["gpio_linha_rele"] = int(resultado.get("gpio_linha_rele", -1))
+    resultado["gpio_ativo_alto"] = bool(resultado.get("gpio_ativo_alto", False))
+    resultado["tempo_acionamento_rele"] = min(10.0, max(0.1, float(resultado.get("tempo_acionamento_rele", 1.0))))
     resultado["pessoas_autorizadas"] = sorted({
         str(nome).strip().lower() for nome in resultado.get("pessoas_autorizadas", [])
         if str(nome).strip()
