@@ -14,5 +14,9 @@
     "cooldown_acesso": 10,
     "porta_esp32": "/dev/ttyACM0",
     "baudrate_esp32": 115200,
-    "pessoas_autorizadas": ["socrates"]
+    "pessoas_autorizadas": [
+        "socrates"
+    ],
+    "largura_deteccao": 320,
+    "intervalo_reconhecimento": 0.35
 }

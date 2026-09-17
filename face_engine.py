@@ -20,11 +20,22 @@ class FaceEngine:
     def configurar_confianca(self, confianca: float) -> None:
         self.detector.setScoreThreshold(float(confianca))
 
-    def detectar(self, frame) -> np.ndarray:
+    def detectar(self, frame, largura_maxima: int | None = None) -> np.ndarray:
         altura, largura = frame.shape[:2]
-        self.detector.setInputSize((largura, altura))
-        _, rostos = self.detector.detect(frame)
-        return np.empty((0, 15), dtype=np.float32) if rostos is None else rostos
+        imagem = frame
+        if largura_maxima and largura > largura_maxima:
+            imagem = cv2.resize(frame, (largura_maxima, max(1, round(altura * largura_maxima / largura))),
+                                interpolation=cv2.INTER_AREA)
+        h, w = imagem.shape[:2]
+        self.detector.setInputSize((w, h))
+        _, rostos = self.detector.detect(imagem)
+        if rostos is None:
+            return np.empty((0, 15), dtype=np.float32)
+        rostos = rostos.copy()
+        # Box and all five landmarks must refer to the original image for alignCrop.
+        rostos[:, [0, 2, 4, 6, 8, 10, 12]] *= largura / w
+        rostos[:, [1, 3, 5, 7, 9, 11, 13]] *= altura / h
+        return rostos
 
     def embedding(self, frame, rosto) -> np.ndarray:
         alinhado = self.reconhecedor.alignCrop(frame, rosto)

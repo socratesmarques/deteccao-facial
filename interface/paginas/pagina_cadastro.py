@@ -125,7 +125,6 @@ class PaginaCadastro(QWidget):
             rosto = rostos[0]
             x, y, w, h = (int(rosto[i]) for i in range(4))
             confianca = float(rosto[-1])
-            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
             agora = time.monotonic()
             if confianca >= 0.90 and agora - self.ultima_captura >= self.intervalo:
                 try:
@@ -138,6 +137,7 @@ class PaginaCadastro(QWidget):
                 if self.contador >= self.quantidade:
                     self.finalizar_cadastro()
                     return
+            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
             self.status.setText(f"{self.obter_instrucao()} — {self.contador}/{self.quantidade}")
         elif len(rostos) > 1:
             self.status.setText("Deixe apenas uma pessoa na câmera.")
