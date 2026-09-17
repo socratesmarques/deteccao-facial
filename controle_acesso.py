@@ -2,61 +2,94 @@ from __future__ import annotations
 
 import threading
 import time
-import serial
 
 
 class ControleAcesso:
-    """Cliente serial thread-safe para o protocolo do ESP32."""
+    """Controla diretamente um relé ligado ao GPIO do Orange Pi."""
 
-    def __init__(self, porta="/dev/ttyACM0", baudrate=115200):
-        self.porta, self.baudrate = porta, int(baudrate)
-        self.esp32 = None
+    def __init__(
+        self,
+        gpio_chip: str = "/dev/gpiochip0",
+        gpio_linha: int = -1,
+        ativo_alto: bool = False,
+        tempo_acionamento: float = 1.0,
+    ):
+        self.gpio_chip = gpio_chip
+        self.gpio_linha = int(gpio_linha)
+        self.ativo_alto = bool(ativo_alto)
+        self.tempo_acionamento = float(tempo_acionamento)
+        self.gpio = None
+        self.ultimo_erro = ""
         self._lock = threading.Lock()
 
-    def configurar(self, porta: str, baudrate: int) -> None:
-        if porta != self.porta or int(baudrate) != self.baudrate:
+    def configurar(
+        self,
+        gpio_chip: str,
+        gpio_linha: int,
+        ativo_alto: bool,
+        tempo_acionamento: float,
+    ) -> None:
+        nova_config = (
+            str(gpio_chip), int(gpio_linha), bool(ativo_alto), float(tempo_acionamento)
+        )
+        atual = (
+            self.gpio_chip, self.gpio_linha, self.ativo_alto, self.tempo_acionamento
+        )
+        if nova_config != atual:
             self.desconectar()
-            self.porta, self.baudrate = porta, int(baudrate)
+            (
+                self.gpio_chip,
+                self.gpio_linha,
+                self.ativo_alto,
+                self.tempo_acionamento,
+            ) = nova_config
+
+    def _nivel_ativo(self) -> bool:
+        return self.ativo_alto
+
+    def _nivel_inativo(self) -> bool:
+        return not self.ativo_alto
 
     def conectar(self) -> bool:
         with self._lock:
             return self._conectar_sem_lock()
 
     def _conectar_sem_lock(self) -> bool:
-        if self.esp32 is not None and self.esp32.is_open:
+        if self.gpio is not None:
             return True
+        if self.gpio_linha < 0:
+            self.ultimo_erro = "Linha GPIO do relé não configurada."
+            return False
         try:
-            self.esp32 = serial.Serial(
-                port=self.porta, baudrate=self.baudrate, timeout=0.25,
-                write_timeout=1, dsrdtr=False, rtscts=False,
-            )
-            self.esp32.dtr = False
-            self.esp32.rts = False
-            time.sleep(1.8)
-            self.esp32.reset_input_buffer()
-            self.esp32.write(b"PING\n")
-            self.esp32.flush()
-            limite = time.monotonic() + 2.0
-            while time.monotonic() < limite:
-                resposta = self.esp32.readline().decode("utf-8", errors="ignore").strip()
-                if resposta == "PONG":
-                    return True
+            from periphery import GPIO
+
+            self.gpio = GPIO(self.gpio_chip, self.gpio_linha, "out")
+            self.gpio.write(self._nivel_inativo())
+            self.ultimo_erro = ""
+            return True
+        except (ImportError, OSError, RuntimeError) as erro:
+            self.ultimo_erro = f"Não foi possível abrir o GPIO do Orange Pi: {erro}"
             self._desconectar_sem_lock()
-        except (OSError, serial.SerialException) as erro:
-            print("Erro ao conectar ao ESP32:", erro)
-            self._desconectar_sem_lock()
-        return False
+            return False
 
     def abrir(self) -> bool:
+        """Aciona o relé e confirma localmente que o pulso GPIO foi concluído."""
         with self._lock:
             if not self._conectar_sem_lock():
                 return False
             try:
-                self.esp32.write(b"ABRIR\n")
-                self.esp32.flush()
+                self.gpio.write(self._nivel_ativo())
+                time.sleep(self.tempo_acionamento)
+                self.gpio.write(self._nivel_inativo())
+                self.ultimo_erro = ""
                 return True
-            except (OSError, serial.SerialException) as erro:
-                print("Erro ao enviar comando ao ESP32:", erro)
+            except (OSError, RuntimeError) as erro:
+                self.ultimo_erro = f"Falha ao acionar o relé no Orange Pi: {erro}"
+                try:
+                    if self.gpio is not None:
+                        self.gpio.write(self._nivel_inativo())
+                except (OSError, RuntimeError):
+                    pass
                 self._desconectar_sem_lock()
                 return False
 
@@ -65,9 +98,14 @@ class ControleAcesso:
             self._desconectar_sem_lock()
 
     def _desconectar_sem_lock(self) -> None:
+        if self.gpio is None:
+            return
         try:
-            if self.esp32 is not None and self.esp32.is_open:
-                self.esp32.close()
-        except (OSError, serial.SerialException):
+            self.gpio.write(self._nivel_inativo())
+        except (OSError, RuntimeError):
             pass
-        self.esp32 = None
+        try:
+            self.gpio.close()
+        except (OSError, RuntimeError):
+            pass
+        self.gpio = None
