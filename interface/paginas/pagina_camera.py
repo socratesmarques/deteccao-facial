@@ -92,33 +92,21 @@ class PaginaCamera(QWidget):
             self.worker = None
         return True
 
-    def verificar_acesso(self, nome: str):
+    def verificar_acesso(self, nome: str, token=None):
         nome = nome.strip().lower()
-        autorizados = set(self.config["pessoas_autorizadas"])
-        if nome == "desconhecido":
-            self._reiniciar_confirmacao()
-            self.status_acesso.setText("Pessoa não reconhecida")
+        if nome == "desconhecido" or nome not in set(self.config["pessoas_autorizadas"]):
             return
-        if nome not in autorizados:
-            self._reiniciar_confirmacao()
-            self.status_acesso.setText(f"{nome.title()} — sem autorização")
+        # No facial-only fallback. The worker issues a one-use permit after fresh
+        # identity confirmation AND the complete randomized blink challenge.
+        if token is None or self.worker is None or self.abrindo_porta:
             return
-
-        if self.nome_confirmacao == nome:
-            self.frames_confirmados += 1
-        else:
-            self.nome_confirmacao, self.frames_confirmados = nome, 1
-        necessarios = self.config["frames_confirmacao"]
-        self.status_acesso.setText(f"Verificando {nome.title()}... {self.frames_confirmados}/{necessarios}")
-        if self.frames_confirmados < necessarios or self.abrindo_porta:
-            return
-
         agora = time.monotonic()
         restante = self.config["cooldown_acesso"] - (agora - self.ultimo_acesso)
         if restante > 0:
-            self.status_acesso.setText(f"{nome.title()} autorizado — aguarde {int(restante) + 1}s")
+            self.status_acesso.setText(f"{nome.title()} — aguarde {int(restante) + 1}s")
             return
-
+        if not self.worker.consume_permit(token):
+            return
         self.abrindo_porta = True
         self.status_acesso.setText("Comunicando com o ESP32...")
         threading.Thread(target=self._abrir_porta, daemon=True).start()
@@ -147,6 +135,7 @@ class PaginaCamera(QWidget):
         if result is None:
             if agora - self.tempo_frame > 1.0:
                 self._reiniciar_confirmacao()
+                self.worker.invalidate_challenge()
                 self.camera_label.setText("Aguardando novos quadros da câmera...")
             return
         if result['error']:
@@ -157,16 +146,19 @@ class PaginaCamera(QWidget):
             return
         if agora - result['captured'] > 1.0:
             self._reiniciar_confirmacao()
+            self.worker.invalidate_challenge()
             self.camera_label.setText("Processamento lento: quadro descartado")
             return
         if self.generation != result['generation']:
             self._reiniciar_confirmacao()
             self.generation = result['generation']
+        if not self.abrindo_porta:
+            self.status_acesso.setText(result.get('blink_prompt', 'Aguardando desafio de piscadas...'))
         if not result['visible']:
             self._reiniciar_confirmacao()
             self.status_acesso.setText("Aguardando rosto selecionado...")
         elif result['fresh']:
-            self.verificar_acesso(result['name'])
+            self.verificar_acesso(result['name'], result.get('blink_token'))
         delta = agora - self.tempo_frame
         if delta > 0:
             atual = 1.0 / delta
