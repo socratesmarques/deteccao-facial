@@ -16,6 +16,8 @@ CONFIG_PADRAO = {
     "confianca_deteccao": 0.80, "mostrar_fps": True,
     "quantidade_cadastro": 20, "intervalo_cadastro": 0.55,
     "frames_confirmacao": 5, "cooldown_acesso": 10,
+    "vivacidade_ativa": True, "vivacidade_limiar": 0.18,
+    "vivacidade_frames": 2, "vivacidade_timeout": 8.0,
     "gpio_chip": "/dev/gpiochip0", "gpio_linha_rele": -1,
     "gpio_ativo_alto": False, "tempo_acionamento_rele": 1.0,
     "pessoas_autorizadas": ["socrates"],
@@ -37,6 +39,10 @@ def _validar(config: dict) -> dict:
     resultado["intervalo_cadastro"] = min(3.0, max(0.2, float(resultado["intervalo_cadastro"])))
     resultado["frames_confirmacao"] = min(30, max(2, int(resultado["frames_confirmacao"])))
     resultado["cooldown_acesso"] = min(300, max(1, int(resultado["cooldown_acesso"])))
+    resultado["vivacidade_ativa"] = bool(resultado.get("vivacidade_ativa", True))
+    resultado["vivacidade_limiar"] = min(0.8, max(0.05, float(resultado.get("vivacidade_limiar", 0.18))))
+    resultado["vivacidade_frames"] = min(10, max(1, int(resultado.get("vivacidade_frames", 2))))
+    resultado["vivacidade_timeout"] = min(30.0, max(3.0, float(resultado.get("vivacidade_timeout", 8.0))))
     resultado["gpio_chip"] = str(resultado.get("gpio_chip", "/dev/gpiochip0")).strip() or "/dev/gpiochip0"
     resultado["gpio_linha_rele"] = int(resultado.get("gpio_linha_rele", -1))
     resultado["gpio_ativo_alto"] = bool(resultado.get("gpio_ativo_alto", False))
