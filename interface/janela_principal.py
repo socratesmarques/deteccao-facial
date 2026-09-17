@@ -230,7 +230,8 @@ class JanelaPrincipal(QMainWindow):
 
         # Reconhecimento precisa liberar
         # a webcam antes.
-        self.pagina_camera.parar_camera()
+        if not self.pagina_camera.parar_camera():
+            return
 
 
         self.paginas.setCurrentWidget(
@@ -244,7 +245,8 @@ class JanelaPrincipal(QMainWindow):
 
     def abrir_pessoas(self):
 
-        self.pagina_camera.parar_camera()
+        if not self.pagina_camera.parar_camera():
+            return
 
 
         if self.pagina_cadastro.cadastrando:
@@ -272,7 +274,8 @@ class JanelaPrincipal(QMainWindow):
 
     def abrir_configuracoes(self):
 
-        self.pagina_camera.parar_camera()
+        if not self.pagina_camera.parar_camera():
+            return
 
 
         if self.pagina_cadastro.cadastrando:
@@ -301,7 +304,8 @@ class JanelaPrincipal(QMainWindow):
 
         # Garante que reconhecimento
         # liberou a webcam.
-        self.pagina_camera.parar_camera()
+        if not self.pagina_camera.parar_camera():
+            return
 
 
         self.pagina_cadastro.preparar_recadastro(nome)
@@ -328,7 +332,9 @@ class JanelaPrincipal(QMainWindow):
         event
     ):
 
-        self.pagina_camera.parar_camera()
+        if not self.pagina_camera.parar_camera():
+            event.ignore()
+            return
 
         self.pagina_camera.controle_acesso.desconectar()
 

@@ -11,6 +11,7 @@ from app_paths import CONFIG_FILE
 CONFIG_PADRAO = {
     "perfil_hardware": "auto", "camera": "/dev/video0",
     "largura_camera": 640, "altura_camera": 480, "fps_camera": 20,
+    "largura_deteccao": 320, "intervalo_reconhecimento": 0.35,
     "processar_a_cada_frames": 1, "limiar_reconhecimento": 0.46,
     "confianca_deteccao": 0.80, "mostrar_fps": True,
     "quantidade_cadastro": 20, "intervalo_cadastro": 0.55,
@@ -23,6 +24,8 @@ CONFIG_PADRAO = {
 def _validar(config: dict) -> dict:
     resultado = copy.deepcopy(CONFIG_PADRAO)
     resultado.update(config if isinstance(config, dict) else {})
+    resultado["largura_deteccao"] = min(1280, max(160, int(resultado["largura_deteccao"])))
+    resultado["intervalo_reconhecimento"] = min(2.0, max(0.0, float(resultado["intervalo_reconhecimento"])))
     resultado["largura_camera"] = max(320, int(resultado["largura_camera"]))
     resultado["altura_camera"] = max(240, int(resultado["altura_camera"]))
     resultado["fps_camera"] = min(60, max(5, int(resultado["fps_camera"])))

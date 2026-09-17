@@ -24,6 +24,10 @@ class PaginaConfiguracoes(QWidget):
         self.largura = QSpinBox(); self.largura.setRange(320, 1920)
         self.altura = QSpinBox(); self.altura.setRange(240, 1080)
         self.fps = QSpinBox(); self.fps.setRange(5, 60)
+        self.deteccao = QSpinBox(); self.deteccao.setRange(160, 1280)
+        self.intervalo_rec = QDoubleSpinBox(); self.intervalo_rec.setRange(0, 2); self.intervalo_rec.setSingleStep(0.05)
+        form.addRow("Largura da detecção:", self.deteccao)
+        form.addRow("Intervalo do reconhecimento (s):", self.intervalo_rec)
         form.addRow("Perfil:", self.perfil)
         form.addRow("Dispositivo:", self.camera)
         form.addRow("Largura:", self.largura)
@@ -72,6 +76,8 @@ class PaginaConfiguracoes(QWidget):
             self.camera.addItem(str(c["camera"])); indice = self.camera.count() - 1
         self.camera.setCurrentIndex(indice)
         self.perfil.setCurrentText(c["perfil_hardware"])
+        self.deteccao.setValue(c["largura_deteccao"])
+        self.intervalo_rec.setValue(c["intervalo_reconhecimento"])
         self.largura.setValue(c["largura_camera"]); self.altura.setValue(c["altura_camera"])
         self.fps.setValue(c["fps_camera"]); self.limiar.setValue(c["limiar_reconhecimento"])
         self.confianca.setValue(c["confianca_deteccao"]); self.frames.setValue(c["frames_confirmacao"])
@@ -82,6 +88,7 @@ class PaginaConfiguracoes(QWidget):
     def salvar(self):
         config = carregar_configuracoes()
         config.update({
+            "largura_deteccao": self.deteccao.value(), "intervalo_reconhecimento": self.intervalo_rec.value(),
             "perfil_hardware": self.perfil.currentText(), "camera": self.camera.currentText(),
             "largura_camera": self.largura.value(), "altura_camera": self.altura.value(),
             "fps_camera": self.fps.value(), "limiar_reconhecimento": self.limiar.value(),
