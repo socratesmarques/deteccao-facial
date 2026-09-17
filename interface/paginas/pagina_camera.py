@@ -13,6 +13,7 @@ from access_logger import AccessLogger
 from recognition_worker import RecognitionWorker
 from configuracoes import carregar_configuracoes
 from controle_acesso import ControleAcesso
+from liveness import HeadTurnLiveness
 from perfil_store import PerfilStore
 
 
@@ -34,11 +35,12 @@ class PaginaCamera(QWidget):
         self.ultimo_acesso = 0.0
         self.abrindo_porta = False
         self.nome_acionamento = None
-        self.contador_frames = 0
         self.fps = 0.0
         self.tempo_frame = time.monotonic()
         self.ultima_decisao_logada = None
         self.ultima_decisao_em = 0.0
+        self.liveness = HeadTurnLiveness()
+        self.nome_liveness = None
 
         layout = QVBoxLayout(self)
         titulo = QLabel("Reconhecimento Facial")
@@ -61,10 +63,12 @@ class PaginaCamera(QWidget):
     def carregar_configuracoes(self):
         self.config = carregar_configuracoes()
         self.controle_acesso.configurar(
-            self.config["gpio_chip"],
-            self.config["gpio_linha_rele"],
-            self.config["gpio_ativo_alto"],
-            self.config["tempo_acionamento_rele"],
+            self.config["gpio_chip"], self.config["gpio_linha_rele"],
+            self.config["gpio_ativo_alto"], self.config["tempo_acionamento_rele"],
+        )
+        self.liveness = HeadTurnLiveness(
+            self.config["vivacidade_limiar"], self.config["vivacidade_frames"],
+            self.config["vivacidade_timeout"],
         )
 
     def carregar_perfis(self):
@@ -79,21 +83,15 @@ class PaginaCamera(QWidget):
         if self.worker is not None and self.worker.is_alive():
             self.status_acesso.setText("Câmera em uso; aguarde encerrar antes de reiniciar.")
             return
-        self.carregar_configuracoes()
-        self.carregar_perfis()
-        self._reiniciar_confirmacao()
-        self.generation = None
-        self.fps = 0.0
-        self.tempo_frame = time.monotonic()
+        self.carregar_configuracoes(); self.carregar_perfis(); self._reiniciar_confirmacao()
+        self.generation = None; self.fps = 0.0; self.tempo_frame = time.monotonic()
         self.camera_label.setText("Iniciando câmera...")
         self.worker = RecognitionWorker(self.config, self.perfis, self.nomes)
         self.worker.start()
         self.timer.start(max(15, round(1000 / self.config["fps_camera"])))
 
     def parar_camera(self):
-        self.timer.stop()
-        self._reiniciar_confirmacao()
-        self.camera_label.setText("Câmera desligada")
+        self.timer.stop(); self._reiniciar_confirmacao(); self.camera_label.setText("Câmera desligada")
         if self.worker is not None:
             if not self.worker.stop():
                 self.status_acesso.setText("Aguardando o driver liberar a câmera. Tente novamente.")
@@ -102,122 +100,103 @@ class PaginaCamera(QWidget):
         return True
 
     def _registrar_decisao(self, nome: str, decisao: str, detalhe: str = ""):
-        chave = (nome.strip().lower(), decisao)
-        agora = time.monotonic()
+        chave = (nome.strip().lower(), decisao); agora = time.monotonic()
         if chave == self.ultima_decisao_logada and agora - self.ultima_decisao_em < 3.0:
             return
         self.logger.registrar(nome, decisao, detalhe)
-        self.ultima_decisao_logada = chave
-        self.ultima_decisao_em = agora
+        self.ultima_decisao_logada, self.ultima_decisao_em = chave, agora
 
-    def verificar_acesso(self, nome: str):
-        nome_original = nome.strip() or "Desconhecido"
-        nome = nome_original.lower()
+    def verificar_acesso(self, nome: str, pose=None):
+        nome_original = nome.strip() or "Desconhecido"; nome = nome_original.lower()
         autorizados = set(self.config["pessoas_autorizadas"])
         if nome == "desconhecido":
-            self._reiniciar_confirmacao()
-            self.status_acesso.setText("Desconhecido — BLOQUEADO")
-            self._registrar_decisao("Desconhecido", "BLOQUEADO", "Rosto não reconhecido")
-            return
+            self._reiniciar_confirmacao(); self.status_acesso.setText("Desconhecido — BLOQUEADO")
+            self._registrar_decisao("Desconhecido", "BLOQUEADO", "Rosto não reconhecido"); return
         if nome not in autorizados:
-            self._reiniciar_confirmacao()
-            self.status_acesso.setText(f"{nome_original.title()} — BLOQUEADO")
-            self._registrar_decisao(nome_original, "BLOQUEADO", "Pessoa sem autorização")
+            self._reiniciar_confirmacao(); self.status_acesso.setText(f"{nome_original.title()} — BLOQUEADO")
+            self._registrar_decisao(nome_original, "BLOQUEADO", "Pessoa sem autorização"); return
+
+        if self.nome_confirmacao == nome: self.frames_confirmados += 1
+        else:
+            self._reiniciar_confirmacao(); self.nome_confirmacao, self.frames_confirmados = nome, 1
+        if self.frames_confirmados < self.config["frames_confirmacao"]:
+            self.status_acesso.setText(f"{nome_original.title()} — CONFIRMANDO ROSTO")
             return
+
+        if self.config["vivacidade_ativa"]:
+            if self.nome_liveness != nome or self.liveness.desafio is None:
+                self.nome_liveness = nome
+                lado = self.liveness.iniciar()
+                self.status_acesso.setText(f"{nome_original.title()} — VIRE A CABEÇA PARA A {lado.upper()}")
+                return
+            estado = self.liveness.atualizar(pose)
+            if estado == "expirado":
+                self._registrar_decisao(nome_original, "BLOQUEADO", "Desafio de vivacidade expirou")
+                self._reiniciar_confirmacao(); return
+            if estado != "concluido":
+                lado = self.liveness.desafio or "lado indicado"
+                self.status_acesso.setText(f"{nome_original.title()} — VIRE A CABEÇA PARA A {lado.upper()}")
+                return
 
         self.status_acesso.setText(f"{nome_original.title()} — LIBERADO")
-        if self.nome_confirmacao == nome:
-            self.frames_confirmados += 1
-        else:
-            self.nome_confirmacao, self.frames_confirmados = nome, 1
-        necessarios = self.config["frames_confirmacao"]
-        if self.frames_confirmados < necessarios or self.abrindo_porta:
-            return
-
+        if self.abrindo_porta: return
         agora = time.monotonic()
-        restante = self.config["cooldown_acesso"] - (agora - self.ultimo_acesso)
-        if restante > 0:
-            return
-
-        self.abrindo_porta = True
-        self.nome_acionamento = nome_original
+        if self.config["cooldown_acesso"] - (agora - self.ultimo_acesso) > 0: return
+        self.abrindo_porta = True; self.nome_acionamento = nome_original
         threading.Thread(target=self._abrir_porta, args=(nome_original,), daemon=True).start()
         self._reiniciar_confirmacao()
 
     def _abrir_porta(self, nome: str):
-        sucesso = self.controle_acesso.abrir()
-        self.resultado_porta.emit(sucesso, nome)
+        self.resultado_porta.emit(self.controle_acesso.abrir(), nome)
 
     def _mostrar_resultado_porta(self, sucesso: bool, nome: str):
         self.abrindo_porta = False
         if sucesso:
-            self.ultimo_acesso = time.monotonic()
-            self.status_acesso.setText(f"{nome.title()} — LIBERADO")
-            self.logger.registrar(nome, "LIBERADO", "Relé acionado pelo Orange Pi")
+            self.ultimo_acesso = time.monotonic(); self.status_acesso.setText(f"{nome.title()} — LIBERADO")
+            self.logger.registrar(nome, "LIBERADO", "Vivacidade confirmada; relé acionado pelo Orange Pi")
         else:
             detalhe = self.controle_acesso.ultimo_erro or "Falha ao acionar o relé"
-            self.status_acesso.setText(f"{nome.title()} — ERRO NO RELÉ")
-            self.logger.registrar(nome, "ERRO", detalhe)
+            self.status_acesso.setText(f"{nome.title()} — ERRO NO RELÉ"); self.logger.registrar(nome, "ERRO", detalhe)
         self.nome_acionamento = None
 
     def _reiniciar_confirmacao(self):
-        self.nome_confirmacao = None
-        self.frames_confirmados = 0
+        self.nome_confirmacao = None; self.frames_confirmados = 0; self.nome_liveness = None; self.liveness.reset()
 
     def atualizar_camera(self):
-        if self.worker is None:
-            return
-        result = self.worker.take()
-        agora = time.monotonic()
+        if self.worker is None: return
+        result = self.worker.take(); agora = time.monotonic()
         if result is None:
             if agora - self.tempo_frame > 1.0:
-                self._reiniciar_confirmacao()
-                self.camera_label.setText("Aguardando novos quadros da câmera...")
+                self._reiniciar_confirmacao(); self.camera_label.setText("Aguardando novos quadros da câmera...")
             return
         if result['error']:
-            self._reiniciar_confirmacao()
-            self.camera_label.setText("Câmera indisponível")
-            self.status_acesso.setText(result['error'])
-            self.timer.stop()
-            return
+            self._reiniciar_confirmacao(); self.camera_label.setText("Câmera indisponível")
+            self.status_acesso.setText(result['error']); self.timer.stop(); return
         if agora - result['captured'] > 1.0:
-            self._reiniciar_confirmacao()
-            self.camera_label.setText("Processamento lento: quadro descartado")
-            return
+            self._reiniciar_confirmacao(); self.camera_label.setText("Processamento lento: quadro descartado"); return
         if self.generation != result['generation']:
-            self._reiniciar_confirmacao()
-            self.generation = result['generation']
+            self._reiniciar_confirmacao(); self.generation = result['generation']
         if not result['visible']:
-            self._reiniciar_confirmacao()
-            self.status_acesso.setText("Aguardando rosto...")
-        elif result['fresh']:
-            self.verificar_acesso(result['name'])
+            self._reiniciar_confirmacao(); self.status_acesso.setText("Aguardando rosto...")
+        elif result['fresh'] or self.nome_liveness is not None:
+            self.verificar_acesso(result['name'], result.get('pose'))
         else:
             nome = result['name']
-            if nome != 'Desconhecido':
-                situacao = "LIBERADO" if result.get('liberado') else "BLOQUEADO"
-                self.status_acesso.setText(f"{nome.title()} — {situacao}")
+            if nome != 'Desconhecido' and self.frames_confirmados < self.config['frames_confirmacao']:
+                self.status_acesso.setText(f"{nome.title()} — CONFIRMANDO ROSTO")
         delta = agora - self.tempo_frame
         if delta > 0:
-            atual = 1.0 / delta
-            self.fps = atual if self.fps == 0 else self.fps * 0.9 + atual * 0.1
-        self.tempo_frame = agora
-        frame = result['frame']
+            atual = 1.0 / delta; self.fps = atual if self.fps == 0 else self.fps * 0.9 + atual * 0.1
+        self.tempo_frame = agora; frame = result['frame']
         if self.config["mostrar_fps"]:
-            cv2.putText(frame, f"FPS: {self.fps:.1f}", (20, 35),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 0), 2)
+            cv2.putText(frame, f"FPS: {self.fps:.1f}", (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 0), 2)
         self._mostrar_frame(frame)
 
     def _mostrar_frame(self, frame):
-        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        altura, largura, canais = rgb.shape
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB); altura, largura, canais = rgb.shape
         imagem = QImage(rgb.data, largura, altura, canais * largura, QImage.Format_RGB888).copy()
-        pixmap = QPixmap.fromImage(imagem).scaled(
-            self.camera_label.size(), Qt.KeepAspectRatio, Qt.FastTransformation
-        )
+        pixmap = QPixmap.fromImage(imagem).scaled(self.camera_label.size(), Qt.KeepAspectRatio, Qt.FastTransformation)
         self.camera_label.setPixmap(pixmap)
 
     def closeEvent(self, event):
-        self.parar_camera()
-        self.controle_acesso.desconectar()
-        event.accept()
+        self.parar_camera(); self.controle_acesso.desconectar(); event.accept()
