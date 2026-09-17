@@ -8,6 +8,7 @@ import cv2
 
 from camera_utils import abrir_camera
 from face_engine import FaceEngine
+from liveness import desvio_nariz_yunet
 from single_face import SingleFaceProcessor
 
 
@@ -48,15 +49,17 @@ class RecognitionWorker(threading.Thread):
                     raise RuntimeError('Falha ao capturar imagem. Reinicie a câmera.')
                 face, name, score, fresh, generation = processor.process(frame, time.monotonic())
                 liberado = name != 'Desconhecido' and name.strip().lower() in self.autorizados
+                pose = desvio_nariz_yunet(face)
                 if face is not None:
                     x, y, w, h = (int(v) for v in face[:4])
                     color = (0, 180, 0) if liberado else (0, 0, 255)
-                    situacao = 'LIBERADO' if liberado else 'BLOQUEADO'
+                    situacao = 'AUTORIZADO' if liberado else 'BLOQUEADO'
                     cv2.rectangle(frame, (x, y), (x+w, y+h), color, 2)
                     cv2.putText(frame, f'{name} - {situacao}', (x, max(20, y-10)),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.65, color, 2)
                 self.publish(dict(frame=frame, name=name, fresh=fresh, visible=face is not None,
-                                  liberado=liberado, generation=generation, captured=start, error=None))
+                                  liberado=liberado, pose=pose, generation=generation,
+                                  captured=start, error=None))
                 self.stop_event.wait(max(0, 1 / self.config['fps_camera'] - (time.monotonic()-start)))
         except Exception as error:
             self.publish(dict(error=f'Erro na câmera/reconhecimento: {error}'))
