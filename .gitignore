@@ -14,3 +14,7 @@ perfis.npz
 *.yml
 *.log
 .DS_Store
+
+# Downloaded separately with a pinned checksum
+modelos/lbfmodel.yaml
+modelos/*.download
