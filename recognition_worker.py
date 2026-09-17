@@ -75,12 +75,17 @@ class RecognitionWorker(threading.Thread):
                 ok, frame = camera.read()
                 if not ok:
                     raise RuntimeError('Falha ao capturar imagem. Reinicie a câmera.')
-                face, name, score, fresh, generation = processor.process(frame, time.monotonic())
+                ratios = None
+                def measure_before_recognition(image, selected):
+                    nonlocal ratios
+                    ratios = eyes.measure(image, selected)
+                    return challenge.allow_recognition(ratios)
+                face, name, score, fresh, generation = processor.process(
+                    frame, time.monotonic(), before_recognition=measure_before_recognition)
                 now = time.monotonic()
                 eligible = face is not None and name.strip().lower() in authorized and name != 'Desconhecido'
                 # Original unpainted pixels, one selected ROI only. Eye sampling is NOT
                 # throttled by the SFace interval: blink transitions need every frame.
-                ratios = eyes.measure(frame, face) if eligible else None
                 token = challenge.update((generation, name) if eligible else None, fresh, ratios, now)
                 if time.monotonic() - start > 1.0:
                     challenge.reset()
@@ -95,7 +100,8 @@ class RecognitionWorker(threading.Thread):
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.65, color, 2)
                 self.publish(dict(frame=frame, name=name, fresh=fresh, visible=face is not None,
                                   generation=generation, captured=start, error=None,
-                                  blink_token=token, blink_prompt=prompt))
+                                  blink_token=token, blink_prompt=prompt,
+                                  blink_diagnostic=challenge.diagnostic(ratios) + "\n" + eyes.status))
                 self.stop_event.wait(max(0, 1 / self.config['fps_camera'] - (time.monotonic()-start)))
         except Exception as error:
             self.publish(dict(error=f'Erro na câmera/reconhecimento: {error}'))

@@ -94,3 +94,29 @@ def test_configured_stride_does_not_skip_presence_checks():
     engine.faces = []
     assert p.process(None, 2)[0] is None
     assert engine.calls == 1
+
+
+def test_deferred_embedding_does_not_erase_identity_and_rechecks_after_opening():
+    engine, p = processor()
+    p.process(None, 0)
+    calls = engine.calls
+    epoch = p.evidence_epoch
+    for now in (.4, .6, .8):
+        result = p.process(None, now, before_recognition=lambda image, selected: False)
+        assert result[1] == 'ana' and not result[3] and result[4] == epoch
+    assert engine.calls == calls
+    result = p.process(None, 1, before_recognition=lambda image, selected: True)
+    assert result[3] and engine.calls == calls+1
+
+
+def test_eye_measurement_is_called_only_for_the_selected_face():
+    engine, p = processor()
+    seen = []
+    def measure(image, selected):
+        seen.append(selected[0])
+        return True
+    p.process(None, 0, before_recognition=measure)
+    assert seen == [0]
+    engine.faces = []
+    p.process(None, .2, before_recognition=measure)
+    assert seen == [0]

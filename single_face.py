@@ -60,7 +60,7 @@ class SingleFaceProcessor:
         self.frames = 0
         self.evidence_epoch = 0
 
-    def process(self, frame, now):
+    def process(self, frame, now, before_recognition=None):
         self.frames += 1
         faces = self.engine.detectar(frame, largura_maxima=self.config['largura_deteccao'])
         face = self.target.select(faces, now)
@@ -71,7 +71,8 @@ class SingleFaceProcessor:
             self.name, self.score = 'Desconhecido', 0.0
             self.last_recognition = float('-inf')
         fresh = False
-        if face is not None and (changed or (
+        allowed = face is not None and (before_recognition is None or before_recognition(frame, face))
+        if allowed and (changed or (
             now - self.last_recognition >= self.config['intervalo_reconhecimento']
             and self.frames % self.config['processar_a_cada_frames'] == 0
         )):

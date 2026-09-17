@@ -64,28 +64,30 @@ def test_complete_pipeline_requires_blinks_and_revokes_after_disappearance(monke
     monkeypatch.setattr(blink_challenge.secrets, 'choice', lambda choices: choices[0])
     worker = module.RecognitionWorker(dict(CONFIG_PADRAO, pessoas_autorizadas=['ana']),
                                       np.ones((1, 128)), np.array(['ana']))
-    # 5 confirmations, open baseline, full blink, post-blink confirmation, then loss.
-    sequence = [(0.3, 0.3)]*7 + [(0.1, 0.1)]*2 + [(0.3, 0.3)]*3 + [None]
+    # Identity + guided calibration + low-FPS one-frame blink + recheck + loss.
+    sequence = [(0.3, 0.3)]*10 + [(0.1, 0.1)]*3 + [(0.3, 0.3)]*2 + [(0.1, 0.1)] + [(0.3, 0.3)]*3 + [None]
     index = [-1]
     released = []
     class Camera:
         def read(self):
             index[0] += 1
-            clock[0] += 0.1
+            clock[0] += 0.2
             if index[0] == len(sequence)-1:
                 worker.stop_event.set()
             return True, np.zeros((200, 200, 3), dtype=np.uint8)
         def release(self):
             released.append(True)
     class Eyes:
+        status = 'OK'
         def measure(self, frame, face):
             return sequence[index[0]]
     class Processor:
         def __init__(self, *args):
             pass
-        def process(self, frame, now):
+        def process(self, frame, now, before_recognition=None):
             face = None if sequence[index[0]] is None else np.array([10, 10, 100, 100])
-            return face, 'ana', 0.9, True, 1
+            fresh = before_recognition(frame, face) if face is not None else False
+            return face, 'ana', 0.9, fresh, 1
     monkeypatch.setattr(module, 'abrir_camera', lambda *args: Camera())
     monkeypatch.setattr(module, 'FaceEngine', lambda *args: object())
     monkeypatch.setattr(module, 'EyeLandmarks', Eyes)
@@ -97,8 +99,8 @@ def test_complete_pipeline_requires_blinks_and_revokes_after_disappearance(monke
         original_publish(result)
     monkeypatch.setattr(worker, 'publish', publish)
     worker.run()
-    assert not any(r['blink_token'] for r in results[:11])
-    assert results[11]['blink_token']
-    assert results[12]['blink_token'] is None
+    assert not any(r['blink_token'] for r in results[:-2])
+    assert results[-2]['blink_token']
+    assert results[-1]['blink_token'] is None
     assert worker.permit is None
     assert released == [True]

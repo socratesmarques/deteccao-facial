@@ -46,6 +46,9 @@ class PaginaCamera(QWidget):
         layout.addWidget(titulo)
         layout.addWidget(self.status_acesso)
         layout.addWidget(self.camera_label)
+        self.diagnostico_piscadas = QLabel("Diagnóstico dos olhos: aguardando câmera...")
+        self.diagnostico_piscadas.setWordWrap(True)
+        layout.addWidget(self.diagnostico_piscadas)
 
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.atualizar_camera)
@@ -152,6 +155,7 @@ class PaginaCamera(QWidget):
         if self.generation != result['generation']:
             self._reiniciar_confirmacao()
             self.generation = result['generation']
+        self.diagnostico_piscadas.setText(result.get("blink_diagnostic", "Sem diagnóstico ocular"))
         if not self.abrindo_porta:
             self.status_acesso.setText(result.get('blink_prompt', 'Aguardando desafio de piscadas...'))
         if not result['visible']:

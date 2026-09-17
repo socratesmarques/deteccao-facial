@@ -131,78 +131,90 @@ novamente após a liberação do driver; não se chama `release()` concorrente c
 
 ## Desafio aleatório de piscadas (experimental)
 
-**Reconhecer o rosto sozinho não libera mais o acesso.** Após confirmar um nome
-cadastrado e autorizado, a tela pede **1 a 5 piscadas**. A quantidade é sorteada com
-`secrets` e difere do desafio anterior na mesma sessão da câmera. Reiniciar a câmera
-cria outra sessão, então a quantidade pode coincidir com a da sessão anterior.
+**Reconhecer o rosto sozinho não libera o acesso.** Após confirmar uma identidade
+autorizada, há uma calibração guiada, seguida de **1 a 5 piscadas**. O número é sorteado
+com `secrets`, sem repetir o anterior na mesma sessão da câmera.
 
-1. Olhe de frente e mantenha os dois olhos abertos até aparecer o pedido.
-2. Pisque **devagar**, fechando e reabrindo os dois olhos. A tela mostra `0/N`, `1/N` etc.
-3. Depois da última piscada, mantenha os olhos abertos até concluir a nova confirmação
-   facial. Só então é emitida uma autorização de uso único para o controlador existente.
+### Como usar a contagem corrigida
 
-O sistema mede a proporção de abertura dos olhos (EAR) com **68 pontos faciais LBF**
-no rosto selecionado. YuNet sozinho só fornece centros dos olhos, não pálpebras.
-Cada piscada exige olhos abertos em dois quadros, fechados em pelo menos dois quadros,
-e reabertos em dois quadros. Um único quadro de ruído, um olho fechado ou olhos
-permanentemente fechados não devem completar o ciclo. EAR fechado ≤0,20; aberto ≥0,25.
-Esses limiares são heurísticos e precisam de validação com pessoas reais.
+1. Siga a mensagem **mantenha os olhos abertos normalmente, sem arregalar**.
+2. Quando solicitado, **feche os dois olhos por cerca de 1 segundo e reabra**.
+   Este fechamento serve para calibrar e **não entra no contador**.
+3. Aguarde aparecer **Pisque N vezes: 0/N**. Só então execute as piscadas pedidas.
+4. Após a última, mantenha os olhos abertos. Um novo reconhecimento do mesmo nome
+   precisa confirmar a identidade antes de liberar uma autorização de uso único.
 
-- Prazo: 25 s por desafio; resultado concluído expira em 3 s.
-- Perda/troca do rosto, nome desconhecido, olhos sem medição válida, pausa entre
-  amostras acima de 0,6 s ou quadro processado antigo descartam todo o progresso.
-- Fechar os olhos por mais de 1,5 s invalida a tentativa. Ao repetir, há novo sorteio.
-- O desafio deve terminar antes de um **novo** reconhecimento do mesmo nome: um
-  resultado facial em cache não libera a porta. A autorização só pode ser usada uma vez,
-  inclusive se a comunicação com o controlador falhar.
-- Não há opção de ignorar o desafio nem fallback para acesso só pelo rosto. Modelo
-  ausente, OpenCV incompatível ou falha de processamento bloqueiam a liberação.
+A calibração mede separadamente a abertura de cada olho com os landmarks LBF e
+calcula limites individuais de aberto/fechado. Não usa mais EAR universal 0,20/0,25.
+Ela exige referência aberta estável e queda bilateral de pelo menos 20% e 0,025 EAR
+no fechamento; sem contraste mensurável, não inicia o desafio. Prazo de calibração:
+20 s. O limite para fechado fica em 35% do intervalo medido fechado→aberto, e o limite
+para aberto em 70%, evitando alternância por pequenas oscilações.
 
-### Instalar o modelo (uma vez por máquina)
+### Correções da contagem
 
-Com o ambiente virtual ativado e as dependências instaladas:
+- A exigência antiga de dois quadros fechados perdia piscadas em FPS baixo. Com
+  intervalo mediano entre amostras ≥0,12 s, um quadro **bilateralmente fechado**
+  pode contar, desde que precedido por olhos abertos e seguido de duas leituras
+  abertas. Com amostragem mais rápida, continuam necessárias duas leituras fechadas.
+  Essa tolerância aumenta a sensibilidade a ruído em FPS baixo; não torna o desafio
+  uma prova de vivacidade.
+- Nenhuma piscada é inventada se todo o fechamento ocorrer entre os quadros.
+- A extração SFace é adiada enquanto os olhos estão fechados ou a calibração pede
+  fechamento. Isso evita reiniciar o desafio por uma comparação facial ruim causada
+  pelo próprio gesto. A detecção do alvo permanece ativa e a identidade é comparada
+  novamente com olhos abertos. Nenhum resultado em cache libera acesso.
+- A região usada pelo LBF tem agora até 384 px para preservar mais detalhes dos olhos.
+- Abaixo da imagem aparece **diagnóstico dos olhos**: estado, EAR esquerdo/direito,
+  limites calculados, taxa de amostras e último motivo de reinício/rejeição. Não grava
+  fotos, vídeo nem dados biométricos novos em disco.
+
+Se continuar sem contar, envie uma foto/captura dessa área de diagnóstico durante a
+calibração e durante uma piscada. Se o EAR quase não mudar ao fechar os olhos, o modelo
+não está medindo as pálpebras de forma utilizável naquela condição; alterar apenas o
+contador não resolve. Aproximar o rosto, olhar de frente e melhorar iluminação pode
+ajudar. Não arregale os olhos para calibrar: a referência deve ser sua abertura normal.
+
+### Instalação do modelo (uma vez por máquina)
+
+No ambiente virtual, com as dependências do projeto instaladas:
 
 ```bash
 python baixar_modelo_piscadas.py
 python main.py
 ```
 
-O instalador baixa cerca de 54 MB do [repositório do autor do Facemark/LBF](https://github.com/kurnianggoro/GSOC2017)
-num commit fixo, valida SHA-256 e só então substitui o arquivo local. Não baixa nada
-durante o reconhecimento. O modelo é mantido fora do Git; consulte a origem e os termos
-dos dados/modelo antes de usos além da demonstração acadêmica.
+Se já instalou o modelo no PR anterior, **não precisa baixá-lo novamente**. O instalador
+também detecta o arquivo correto e não refaz o download.
 
-Requer OpenCV com `cv2.face.createFacemarkLBF` ([documentação](https://docs.opencv.org/4.x/dc/d63/classcv_1_1face_1_1FacemarkLBF.html)).
-O `opencv-contrib-python` das dependências do notebook fornece esse módulo. Na Orange Pi,
-confira o pacote instalado no seu sistema:
+O modelo LBF (~54 MB) vem do [repositório do autor](https://github.com/kurnianggoro/GSOC2017),
+com commit fixo e SHA-256 verificado antes da substituição atômica. Fica fora do Git.
+Consulte os termos de origem dos dados/modelo antes de usos além da demonstração
+acadêmica. Requer `cv2.face.createFacemarkLBF` no OpenCV contrib
+([documentação](https://docs.opencv.org/4.x/dc/d63/classcv_1_1face_1_1FacemarkLBF.html)).
+Na Orange Pi, confira o OpenCV da distribuição:
 
 ```bash
 python -c "import cv2; print(cv2.__version__); print(hasattr(cv2, 'face') and hasattr(cv2.face, 'createFacemarkLBF'))"
 ```
 
-O último resultado precisa ser `True`. Se for `False`, a aplicação mostra erro e mantém
-o acesso bloqueado; é necessário instalar um OpenCV contrib compatível com a distribuição.
-Não instala MediaPipe nem dlib.
+O último resultado deve ser `True`. Ausência do modelo/módulo ou erro de processamento
+bloqueiam a liberação, sem fallback para acesso só pelo rosto. Não há MediaPipe/dlib.
 
-### Limitações e teste na Orange Pi
+### Limites e validação física pendente
 
-**Isto dificulta uma foto estática, mas NÃO é anti-spoofing robusto.** O movimento da foto,
-falhas dos landmarks, vídeos, animações ou manipulação da câmera podem enganar uma
-heurística de piscadas. Há apenas cinco quantidades possíveis. Não usar este desafio
-como única proteção de uma porta real que exija segurança contra fraude.
-
-Óculos, pouca luz, rosto pequeno/inclinado e características dos olhos podem impedir
-contagem correta. Rostos menores que 80 px ou cortados pela borda são recusados para
-a medição ocular. Na Orange Pi com FPS baixo, piscadas naturais rápidas podem não ser
-capturadas: use piscadas lentas seguindo o contador; não reduza confirmações para
-compensar quadros perdidos. Abaixo de aproximadamente 2 FPS, as lacunas podem reiniciar
-o desafio por segurança. Pessoas que não conseguem executar o gesto precisarão de
-outro método de acesso, ainda não implementado.
-
-Validação automatizada cobre a máquina de estados e o bloqueio/liberação, não comprova
-resistência a ataques físicos. Um smoke test com OpenCV 4.14, YuNet/LBF reais e a imagem
-pública `lena.jpg` do OpenCV confirmou carregamento e medição; 30 medições levaram em
-média 2,24 ms por rosto na CPU de desenvolvimento (2 threads). Não é medição da Orange Pi,
-nem valida piscadas reais. Teste na placa: pessoa cadastrada, cada quantidade de 1 a 5,
-foto estática, vídeo, saída/troca de pessoa, timeout, câmera desligada e tentativa de
-reutilizar a liberação. O relé/controlador não foi testado fisicamente aqui.
+- Perda/troca do alvo ou da identidade, olhos sem medição válida, lacuna >0,6 s entre
+  amostras e quadros antigos invalidam o desafio. A tela informa o motivo.
+- Desafio: 25 s. Fechamento durante o desafio: máximo de 1,5 s. Resultado concluído:
+  validade de 3 s e uso único, mesmo se o controlador falhar ao abrir.
+- Reiniciar a câmera cria nova sessão: o sorteio pode coincidir com o da sessão anterior.
+- Óculos, inclinação, iluminação, rosto pequeno e variações de anatomia prejudicam LBF.
+  Rostos menores que 80 px ou cortados pela imagem são rejeitados. Piscadas muito rápidas
+  podem não ser capturadas pela câmera; observe o contador e a taxa de amostras.
+- Este é um desafio heurístico experimental, **não anti-spoofing robusto**. Movimentar
+  fotos, usar vídeos/animações ou manipular a câmera ainda pode enganá-lo. Há somente
+  cinco números possíveis; não é proteção suficiente para uma porta real contra fraude.
+- Testes automatizados simulam medições e cadência, incluindo 5 e 60 FPS, EAR fora dos
+  limites antigos, entrada estática, ausência de contraste, ruído, perda de alvo,
+  autorização de uso único e confirmação após a piscada. **Não substituem teste na
+  Orange Pi com pessoas reais.** Não tenho câmera/placa/relé nesse ambiente.
