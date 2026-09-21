@@ -1,0 +1,39 @@
+{
+  "source_commit": "b6d5f04ad78778917853b25c778acef6d5626d15",
+  "note": "Three upstream examples only; not a camera accuracy benchmark. Images not distributed.",
+  "results": [
+    {
+      "state": "live",
+      "score": 0.9998591144029246,
+      "scores": [
+        0.9998591144029246,
+        0.9999978363711973
+      ],
+      "reason": "Os dois modelos aprovam a amostra.",
+      "source_file": "image_T1.jpg",
+      "face_count": 1
+    },
+    {
+      "state": "spoof",
+      "score": 0.005638232280841543,
+      "scores": [
+        0.005638232280841543,
+        0.4368300819230311
+      ],
+      "reason": "Suspeita de foto/tela ou outra apresenta\u00e7\u00e3o artificial.",
+      "source_file": "image_F1.jpg",
+      "face_count": 1
+    },
+    {
+      "state": "spoof",
+      "score": 0.0009321264009988298,
+      "scores": [
+        0.0009321264009988298,
+        0.004543648347588019
+      ],
+      "reason": "Suspeita de foto/tela ou outra apresenta\u00e7\u00e3o artificial.",
+      "source_file": "image_F2.jpg",
+      "face_count": 1
+    }
+  ]
+}

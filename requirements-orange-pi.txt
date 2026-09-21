@@ -1,0 +1,4 @@
+# No Orange Pi, instale OpenCV pelo apt e use --system-site-packages.
+numpy>=1.26,<3
+python-periphery>=2.4,<3
+PySide6>=6.7,<7

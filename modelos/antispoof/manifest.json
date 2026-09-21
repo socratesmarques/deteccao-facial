@@ -1,0 +1,28 @@
+{
+  "source": "https://github.com/minivision-ai/Silent-Face-Anti-Spoofing",
+  "revision": "b6d5f04ad78778917853b25c778acef6d5626d15",
+  "license": "Apache-2.0",
+  "input": "BGR float32 NCHW 1x3x80x80, range 0..255",
+  "real_class": 1,
+  "opset": 11,
+  "torch": "2.6.0+cpu",
+  "opencv": "4.14.0",
+  "models": [
+    {
+      "file": "2.7_80x80_MiniFASNetV2.onnx",
+      "sha256": "96557b1e03d9458d338f7be168b1469be4c0c5eedfc14ddd2059e7c69a3cf8bf",
+      "scale": 2.7,
+      "original_file": "2.7_80x80_MiniFASNetV2.pth",
+      "original_sha256": "a5eb02e1843f19b5386b953cc4c9f011c3f985d0ee2bb9819eea9a142099bec0",
+      "max_logit_error": 1.2516975402832031e-05
+    },
+    {
+      "file": "4_0_0_80x80_MiniFASNetV1SE.onnx",
+      "sha256": "45562a97d2f68055a6cddbd3bbea5067762c559e29657a95fdbf5329aef9a926",
+      "scale": 4.0,
+      "original_file": "4_0_0_80x80_MiniFASNetV1SE.pth",
+      "original_sha256": "84ee1d37d96894d5e82de5a57df044ef80a58be2b218b5ed7cdfd875ec2f5990",
+      "max_logit_error": 9.715557098388672e-06
+    }
+  ]
+}
